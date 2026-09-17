@@ -9656,8 +9656,14 @@
               loadBitableConfig();
               loadBitableStats();
             }
-            if (tabId === 'overview') {
-              loadRecentBitablePushes();
+            if (tabId === 'assistant') {
+              if (!assistantResponse.value) {
+                loadAssistantHistory().then(() => {
+                  if (assistantHistoryList.value && assistantHistoryList.value.length > 0 && !assistantResponse.value) {
+                    loadHistoryItem(assistantHistoryList.value[0].id);
+                  }
+                });
+              }
             }
           }
         };
@@ -11685,6 +11691,11 @@
         };
 
         onMounted(() => {
+          const urlParams = new URLSearchParams(window.location.search);
+          const initialTab = urlParams.get('tab') || window.location.hash.replace('#', '');
+          if (initialTab) {
+            switchTab(initialTab);
+          }
           refreshAll();
           loadChatSettings();
           loadFeishuConfig();
