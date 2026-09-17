@@ -632,7 +632,7 @@ async def test_embedding_connectivity(payload: TestEmbeddingRequest):
 
     raw_key = (payload.api_key or "").strip()
     if not raw_key or "..." in raw_key or "***" in raw_key:
-        if settings.embedding and settings.embedding.api_key and "..." not in settings.embedding.api_key:
+        if settings.embedding and settings.embedding.api_key and "..." not in settings.embedding.api_key and "***" not in settings.embedding.api_key:
             api_key = settings.embedding.api_key
         else:
             api_key = settings.api_key or os.getenv("OPENROUTER_API_KEY", "") or os.getenv("DASHSCOPE_API_KEY", "")
@@ -640,13 +640,25 @@ async def test_embedding_connectivity(payload: TestEmbeddingRequest):
         api_key = raw_key
 
     endpoint = f"{raw_base}/embeddings"
+    if not api_key and "localhost" not in raw_base and "127.0.0.1" not in raw_base:
+        return TestEmbeddingResponse(
+            success=False,
+            latency_ms=0,
+            dimensions=0,
+            embedding_preview=[],
+            model=model_name,
+            endpoint_used=endpoint,
+            error="未检测到有效的 API Key。请在 Embedding 配置中输入 API 密钥，或在全局设置中保存 API 密钥后再进行连通性测试。",
+        )
+
     try:
         adapter = OpenRouterAdapter(
             api_key=api_key,
             base_url=raw_base,
-            default_model=model_name,
-            timeout=30.0,
+            default_text_model=model_name,
+            timeout_seconds=30.0,
         )
+        endpoint = f"{adapter.base_url}/embeddings"
         embeddings, usage = await adapter.generate_embeddings(
             [test_text],
             model=model_name,

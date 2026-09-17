@@ -27,6 +27,7 @@ class OpenRouterAdapter:
         default_vision_model: str = "qwen3.8-max",
         default_text_model: str = "qwen3.8-max",
         timeout_seconds: float = 240.0,
+        **kwargs: Any,
     ):
         self.api_key = api_key
         trimmed = (base_url or "").strip().rstrip("/")
@@ -41,9 +42,9 @@ class OpenRouterAdapter:
         elif not trimmed.endswith("/v1") and ("nvidia.com" in trimmed or "openai.com" in trimmed or "deepseek.com" in trimmed or "siliconflow.cn" in trimmed or "moonshot.cn" in trimmed or "11434" in trimmed):
             trimmed = f"{trimmed}/v1"
         self.base_url = trimmed
-        self.default_vision_model = default_vision_model
-        self.default_text_model = default_text_model
-        self.timeout = timeout_seconds
+        self.default_vision_model = kwargs.get("vision_model") or default_vision_model
+        self.default_text_model = kwargs.get("default_model") or default_text_model
+        self.timeout = kwargs.get("timeout") or timeout_seconds
 
     def _get_headers(self) -> dict[str, str]:
         headers = {
@@ -528,8 +529,10 @@ class OpenRouterAdapter:
         total_prompt_tokens = 0
 
         async with httpx.AsyncClient(headers=self._get_headers(), timeout=timeout_cfg) as client:
-            for i in range(0, len(texts), max(1, batch_size)):
-                payload = {
+            step = max(1, batch_size)
+            for i in range(0, len(texts), step):
+                batch = texts[i : i + step]
+                payload: dict[str, Any] = {
                     "model": selected_model,
                     "input": batch,
                 }
@@ -553,7 +556,8 @@ class OpenRouterAdapter:
                     all_embeddings.append(it.get("embedding", []))
 
                 usage = data.get("usage", {})
-                total_prompt_tokens += usage.get("prompt_tokens", 0)
+                tokens = usage.get("total_tokens") or usage.get("prompt_tokens") or 0
+                total_prompt_tokens += int(tokens)
 
         return all_embeddings, {"prompt_tokens": total_prompt_tokens, "total_tokens": total_prompt_tokens}
 
