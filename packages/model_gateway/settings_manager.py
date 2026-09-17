@@ -173,9 +173,19 @@ class ModuleConfigItem(BaseModel):
 
 class EmbeddingConfigItem(BaseModel):
     enabled: bool = Field(default=True, description="是否启用稠密向量检索与语义聚类")
+    provider: str = Field(default="qwen", description="服务商: qwen | openrouter | openai | mock | custom")
+    base_url: str = Field(default="", description="独立 Base URL (选填，留空复用全局)")
+    api_key: str = Field(default="", description="独立 API Key (选填，留空复用全局)")
     model: str = Field(default="text-embedding-v3", description="向量嵌入模型名称 (如 text-embedding-v3, text-embedding-3-small, bge-large-zh)")
     dimension: int = Field(default=1536, ge=64, le=4096, description="向量维度")
+    dimensions: Optional[int] = Field(default=1536, ge=64, le=4096, description="向量维度 (别名)")
     batch_size: int = Field(default=16, ge=1, le=128, description="单次向量化请求批次上限")
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.dimensions is not None:
+            self.dimension = self.dimensions
+        elif self.dimension is not None:
+            self.dimensions = self.dimension
 
 
 DEFAULT_SYSTEM_PROMPTS: dict[str, str] = {
@@ -333,6 +343,13 @@ PROVIDER_PRESETS = [
         ],
         "default_text_model": "qwen3.8-max",
         "default_vision_model": "qwen3.8-max",
+        "default_embedding_model": "text-embedding-v3",
+        "recommended_embedding_models": [
+            "text-embedding-v3",
+            "text-embedding-async-v1",
+            "text-embedding-v2",
+            "text-embedding-v1",
+        ],
         "description": "阿里云百炼 / 通义千问官方兼容端点，按量计费，深度适配旗舰 Qwen3.8 多模态与思考模型",
     },
     {
@@ -354,6 +371,12 @@ PROVIDER_PRESETS = [
         ],
         "default_text_model": "qwen3.8-max",
         "default_vision_model": "qwen3.8-max",
+        "default_embedding_model": "text-embedding-v3",
+        "recommended_embedding_models": [
+            "text-embedding-v3",
+            "text-embedding-async-v1",
+            "text-embedding-v2",
+        ],
         "description": "千问 Token Plan 专属订阅端点，以 Credits 统一计量，支持 Qwen3.8 旗舰模型与深度思考",
     },
     {
@@ -373,6 +396,13 @@ PROVIDER_PRESETS = [
         ],
         "default_text_model": "deepseek/deepseek-chat",
         "default_vision_model": "qwen/qwen-2.5-vl-72b-instruct",
+        "default_embedding_model": "openai/text-embedding-3-small",
+        "recommended_embedding_models": [
+            "openai/text-embedding-3-small",
+            "openai/text-embedding-3-large",
+            "baai/bge-m3",
+            "cohere/embed-multilingual-v3.0",
+        ],
         "description": "全球模型聚合网关，支持主流所有大语言与多模态模型一键路由",
     },
     {
@@ -392,6 +422,12 @@ PROVIDER_PRESETS = [
         ],
         "default_text_model": "meta/llama-3.3-70b-instruct",
         "default_vision_model": "meta/llama-3.2-11b-vision-instruct",
+        "default_embedding_model": "nvidia/nv-embedqa-e5-v5",
+        "recommended_embedding_models": [
+            "nvidia/nv-embedqa-e5-v5",
+            "baai/bge-m3",
+            "snowflake/arctic-embed-l",
+        ],
         "description": "NVIDIA 官方高并发推理微服务，支持 Llama 3.3、DeepSeek R1、Nemotron 及视觉多模态",
     },
     {
@@ -408,6 +444,12 @@ PROVIDER_PRESETS = [
         ],
         "default_text_model": "deepseek-chat",
         "default_vision_model": "deepseek-chat",
+        "default_embedding_model": "text-embedding-v3",
+        "recommended_embedding_models": [
+            "text-embedding-v3",
+            "BAAI/bge-m3",
+            "text-embedding-3-small",
+        ],
         "description": "DeepSeek 官方原生 API，具备极致性价比与强劲的中文推理洞察能力",
     },
     {
@@ -426,6 +468,13 @@ PROVIDER_PRESETS = [
         ],
         "default_text_model": "deepseek-ai/DeepSeek-V3",
         "default_vision_model": "Qwen/Qwen2.5-VL-72B-Instruct",
+        "default_embedding_model": "BAAI/bge-m3",
+        "recommended_embedding_models": [
+            "BAAI/bge-m3",
+            "BAAI/bge-large-zh-v1.5",
+            "netease-youdao/bce-embedding-base_v1",
+            "Pro/BAAI/bge-m3",
+        ],
         "description": "国内低延迟云端推理加速平台，支持 DeepSeek 全系列及 Qwen-VL",
     },
     {
@@ -443,6 +492,12 @@ PROVIDER_PRESETS = [
         ],
         "default_text_model": "gpt-4o",
         "default_vision_model": "gpt-4o",
+        "default_embedding_model": "text-embedding-3-small",
+        "recommended_embedding_models": [
+            "text-embedding-3-small",
+            "text-embedding-3-large",
+            "text-embedding-ada-002",
+        ],
         "description": "OpenAI 官方原厂 API 服务，支持 GPT-4o 多模态与 o 系列推理模型",
     },
     {
@@ -460,6 +515,11 @@ PROVIDER_PRESETS = [
         ],
         "default_text_model": "glm-4-plus",
         "default_vision_model": "glm-4v-plus",
+        "default_embedding_model": "embedding-3",
+        "recommended_embedding_models": [
+            "embedding-3",
+            "embedding-2",
+        ],
         "description": "智谱 AI 开放平台，支持 GLM-4 旗舰大模型及多模态 GLM-4V",
     },
     {
@@ -477,6 +537,12 @@ PROVIDER_PRESETS = [
         ],
         "default_text_model": "moonshot-v1-32k",
         "default_vision_model": "moonshot-v1-32k",
+        "default_embedding_model": "text-embedding-v3",
+        "recommended_embedding_models": [
+            "text-embedding-v3",
+            "BAAI/bge-m3",
+            "text-embedding-3-small",
+        ],
         "description": "月之暗面 Kimi 长上下文语言模型，支持大容量文档与聊天上下文理解",
     },
     {
@@ -495,6 +561,12 @@ PROVIDER_PRESETS = [
         ],
         "default_text_model": "qwen2.5:7b",
         "default_vision_model": "llava:7b",
+        "default_embedding_model": "bge-m3",
+        "recommended_embedding_models": [
+            "bge-m3",
+            "nomic-embed-text",
+            "all-minilm",
+        ],
         "description": "本地完全离线部署的大模型环境，无网络依赖，保障数据绝对私密",
     },
     {
@@ -508,6 +580,12 @@ PROVIDER_PRESETS = [
         "recommended_models": [],
         "default_text_model": "gpt-4o",
         "default_vision_model": "gpt-4o",
+        "default_embedding_model": "text-embedding-3-small",
+        "recommended_embedding_models": [
+            "text-embedding-3-small",
+            "text-embedding-v3",
+            "BAAI/bge-m3",
+        ],
         "description": "任何遵循 OpenAI 规范的第三方转发网关、OneAPI / NewAPI 或自建代理",
     },
 ]

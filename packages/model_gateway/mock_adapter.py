@@ -15,8 +15,9 @@ T = TypeVar("T", bound=BaseModel)
 class MockModelAdapter:
     """Deterministic Mock Adapter for unit testing and offline development."""
 
-    def __init__(self):
+    def __init__(self, dimensions: int = 1536):
         self.call_count = 0
+        self.dimensions = dimensions
 
     async def analyze_image(
         self,
@@ -83,7 +84,7 @@ class MockModelAdapter:
         self,
         texts: list[str],
         model: str | None = None,
-        dimension: int = 1536,
+        dimension: int | None = None,
         **kwargs: Any,
     ) -> tuple[list[list[float]], dict[str, Any]]:
         self.call_count += 1
@@ -91,9 +92,10 @@ class MockModelAdapter:
         import math
         import re
 
+        effective_dim = dimension or kwargs.get("dimensions") or getattr(self, "dimensions", 1536) or 1536
         vectors: list[list[float]] = []
         for text in texts:
-            vec = [0.0] * dimension
+            vec = [0.0] * effective_dim
             cleaned = re.sub(r"[^\w\u4e00-\u9fa5]", " ", (text or "").lower()).strip()
             words = cleaned.split()
             ngrams = []
@@ -109,7 +111,7 @@ class MockModelAdapter:
 
             for token in ngrams:
                 h = int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16)
-                idx = h % dimension
+                idx = h % effective_dim
                 sign = 1.0 if ((h >> 16) % 2 == 0) else -1.0
                 vec[idx] += sign
 

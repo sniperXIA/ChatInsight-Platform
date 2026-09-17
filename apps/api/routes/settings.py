@@ -16,6 +16,8 @@ from packages.importers.chat_settings import (
 )
 from packages.importers.watchdog_service import ChatDirectoryWatcher
 from packages.model_gateway.gateway import ModelGateway
+from packages.model_gateway.mock_adapter import MockModelAdapter
+from packages.model_gateway.openrouter_adapter import OpenRouterAdapter
 from packages.model_gateway.settings_manager import (
     DEFAULT_SYSTEM_PROMPTS,
     PROVIDER_PRESETS,
@@ -96,6 +98,7 @@ class FetchModelsRequest(BaseModel):
 class FetchModelsResponse(BaseModel):
     success: bool
     models: list[str]
+    embedding_models: list[str] = Field(default_factory=list, description="从端点检索识别出的向量嵌入模型列表")
     count: int
     endpoint_used: Optional[str] = None
     candidates_tried: list[str] = Field(default_factory=list)
@@ -134,6 +137,26 @@ class TestModelResponse(BaseModel):
     response_preview: Optional[str] = None
     reasoning_preview: Optional[str] = None
     reasoning_tokens: Optional[int] = None
+    error: Optional[str] = None
+
+
+class TestEmbeddingRequest(BaseModel):
+    provider: Optional[str] = Field(default="qwen", description="qwen | openrouter | openai | mock | custom")
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = Field(default="text-embedding-v3", description="向量模型名称")
+    dimensions: Optional[int] = Field(default=None, description="向量维度(如 1024, 1536)")
+    test_text: Optional[str] = Field(default="ChatInsight 向量语义检索连通性测试", description="测试文本")
+
+
+class TestEmbeddingResponse(BaseModel):
+    success: bool
+    latency_ms: float
+    dimensions: int
+    embedding_preview: list[float]
+    model: str
+    endpoint_used: Optional[str] = None
+    tokens_used: Optional[int] = None
     error: Optional[str] = None
 
 
@@ -365,10 +388,13 @@ async def fetch_available_models(payload: FetchModelsRequest = FetchModelsReques
                                 model_ids.append(m)
 
                     model_ids = sorted(list(dict.fromkeys(model_ids)))
+                    embedding_keywords = ("embed", "embedding", "bge", "bce", "gte", "e5", "text2vec", "sentence")
+                    embedding_candidates = [m for m in model_ids if any(k in m.lower() for k in embedding_keywords)]
                     if model_ids:
                         return FetchModelsResponse(
                             success=True,
                             models=model_ids,
+                            embedding_models=embedding_candidates,
                             count=len(model_ids),
                             endpoint_used=url,
                             candidates_tried=candidates_tried,
@@ -377,6 +403,7 @@ async def fetch_available_models(payload: FetchModelsRequest = FetchModelsReques
                     return FetchModelsResponse(
                         success=False,
                         models=[],
+                        embedding_models=[],
                         count=0,
                         endpoint_used=url,
                         candidates_tried=candidates_tried,
@@ -390,6 +417,7 @@ async def fetch_available_models(payload: FetchModelsRequest = FetchModelsReques
     return FetchModelsResponse(
         success=False,
         models=[],
+        embedding_models=[],
         count=0,
         candidates_tried=candidates_tried,
         error=f"所有候选端点均未能获取到模型列表。最后错误: {last_error}。提示：您可以点击“+ 添加自定义模型”手动输入并使用模型名称。",
@@ -563,6 +591,95 @@ async def test_model_connectivity(payload: TestModelRequest):
             model=payload.model_name,
             endpoint_used=endpoint,
             error=f"网络请求异常: {str(exc)}",
+        )
+
+
+@router.post("/models/test-embedding", response_model=TestEmbeddingResponse)
+async def test_embedding_connectivity(payload: TestEmbeddingRequest):
+    """Test embedding model connectivity, latency, vector dimensions and preview."""
+    settings = SettingsManager.get_settings()
+    model_name = payload.model or (settings.embedding.model if settings.embedding else None) or "text-embedding-v3"
+    test_text = payload.test_text or "ChatInsight 向量语义检索连通性测试"
+    provider = (payload.provider or (settings.embedding.provider if settings.embedding else None) or "qwen").lower()
+
+    start_time = time.perf_counter()
+
+    # 1. Mock provider
+    if provider == "mock":
+        dims = payload.dimensions or (settings.embedding.dimensions if settings.embedding else None) or 1024
+        mock_adapter = MockModelAdapter(dimensions=dims)
+        embeddings, usage = await mock_adapter.generate_embeddings([test_text])
+        latency_ms = round((time.perf_counter() - start_time) * 1000, 1)
+        vec = embeddings[0] if embeddings else []
+        preview = [round(float(v), 4) for v in vec[:6]]
+        return TestEmbeddingResponse(
+            success=True,
+            latency_ms=latency_ms,
+            dimensions=len(vec),
+            embedding_preview=preview,
+            model=f"mock-{dims}d",
+            endpoint_used="local://mock-hash-projection",
+            tokens_used=usage.get("total_tokens", len(test_text)),
+        )
+
+    # 2. Remote provider (DashScope / OpenRouter / OpenAI / SiliconFlow / Custom)
+    raw_base = (payload.base_url or (settings.embedding.base_url if settings.embedding else "") or settings.base_url).strip()
+    raw_base = raw_base.rstrip("/")
+    if raw_base.endswith("/chat/completions"):
+        raw_base = raw_base[:-len("/chat/completions")].rstrip("/")
+    elif raw_base.endswith("/embeddings"):
+        raw_base = raw_base[:-len("/embeddings")].rstrip("/")
+
+    raw_key = (payload.api_key or "").strip()
+    if not raw_key or "..." in raw_key or "***" in raw_key:
+        if settings.embedding and settings.embedding.api_key and "..." not in settings.embedding.api_key:
+            api_key = settings.embedding.api_key
+        else:
+            api_key = settings.api_key or os.getenv("OPENROUTER_API_KEY", "") or os.getenv("DASHSCOPE_API_KEY", "")
+    else:
+        api_key = raw_key
+
+    endpoint = f"{raw_base}/embeddings"
+    try:
+        adapter = OpenRouterAdapter(
+            api_key=api_key,
+            base_url=raw_base,
+            default_model=model_name,
+            timeout=30.0,
+        )
+        embeddings, usage = await adapter.generate_embeddings(
+            [test_text],
+            model=model_name,
+            dimensions=payload.dimensions,
+        )
+        latency_ms = round((time.perf_counter() - start_time) * 1000, 1)
+        vec = embeddings[0] if embeddings else []
+        preview = [round(float(v), 4) for v in vec[:6]]
+        tokens_used = usage.get("total_tokens") or usage.get("prompt_tokens")
+        return TestEmbeddingResponse(
+            success=True,
+            latency_ms=latency_ms,
+            dimensions=len(vec),
+            embedding_preview=preview,
+            model=model_name,
+            endpoint_used=endpoint,
+            tokens_used=tokens_used,
+        )
+    except Exception as exc:
+        latency_ms = round((time.perf_counter() - start_time) * 1000, 1)
+        error_msg = str(exc)
+        if "404" in error_msg:
+            error_msg += f" (提示: 端点 {endpoint} 无法访问或模型 '{model_name}' 在此服务商中不存在)"
+        elif "401" in error_msg:
+            error_msg += " (提示: API Key 鉴权失败，请检查密钥是否正确并具有 Embedding 权限)"
+        return TestEmbeddingResponse(
+            success=False,
+            latency_ms=latency_ms,
+            dimensions=0,
+            embedding_preview=[],
+            model=model_name,
+            endpoint_used=endpoint,
+            error=f"Embedding 端点请求异常: {error_msg}",
         )
 
 

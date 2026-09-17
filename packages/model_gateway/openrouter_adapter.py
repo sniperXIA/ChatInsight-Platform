@@ -529,12 +529,17 @@ class OpenRouterAdapter:
 
         async with httpx.AsyncClient(headers=self._get_headers(), timeout=timeout_cfg) as client:
             for i in range(0, len(texts), max(1, batch_size)):
-                batch = texts[i : i + batch_size]
                 payload = {
                     "model": selected_model,
                     "input": batch,
                 }
+                if kwargs.get("dimensions"):
+                    payload["dimensions"] = kwargs["dimensions"]
                 resp = await client.post(endpoint, json=payload)
+                if resp.status_code in (400, 422) and "dimensions" in payload:
+                    # Some endpoints or models do not support dimensions parameter; retry without it
+                    del payload["dimensions"]
+                    resp = await client.post(endpoint, json=payload)
                 if resp.status_code != 200:
                     raise ModelProviderError(
                         f"Embedding API returned status {resp.status_code}: {resp.text[:500]}",

@@ -7548,10 +7548,34 @@
                       <option value="custom">自定义 OpenAI 规范端点</option>
                     </select>
                   </div>
-                  <!-- Model Name -->
+                  <!-- Model Name with Dropdown & Custom Toggle -->
                   <div>
-                    <label class="block text-xs font-semibold text-slate-700 mb-1">向量模型名称 (Embedding Model)</label>
-                    <input v-model="modelConfig.embedding.model" type="text" placeholder="如 text-embedding-v3 / text-embedding-3-small" class="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-indigo-500" />
+                    <div class="flex items-center justify-between mb-1">
+                      <label class="block text-xs font-semibold text-slate-700">向量模型名称 (Embedding Model)</label>
+                      <button 
+                        type="button" 
+                        @click="isCustomEmbeddingInput = !isCustomEmbeddingInput" 
+                        class="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium hover:underline flex items-center gap-1 cursor-pointer"
+                        :title="isCustomEmbeddingInput ? '点击切换为从已知模型列表中下拉选择' : '点击切换为纯文本输入框以填入任意模型名称'"
+                      >
+                        <i :class="isCustomEmbeddingInput ? 'fa-solid fa-list' : 'fa-solid fa-pen-to-square'"></i>
+                        <span>{{ isCustomEmbeddingInput ? '从下拉列表选择' : '自定义输入名称' }}</span>
+                      </button>
+                    </div>
+                    
+                    <div v-if="!isCustomEmbeddingInput" class="flex gap-2">
+                      <select v-model="modelConfig.embedding.model" class="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-indigo-500">
+                        <option v-for="m in allSelectableEmbeddingModels" :key="m" :value="m">{{ m }}</option>
+                      </select>
+                    </div>
+                    <div v-else class="flex gap-2">
+                      <input 
+                        v-model="modelConfig.embedding.model" 
+                        type="text" 
+                        placeholder="如 text-embedding-v3 / BAAI/bge-m3 / text-embedding-3-small" 
+                        class="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-indigo-500" 
+                      />
+                    </div>
                   </div>
                   <!-- Dimensions & Batch Size -->
                   <div class="grid grid-cols-2 gap-2">
@@ -7576,6 +7600,67 @@
                   <div>
                     <label class="block text-xs font-semibold text-slate-700 mb-1">独立 API Key <span class="text-slate-400 font-normal">(选填，留空自动复用全局密钥)</span></label>
                     <input v-model="modelConfig.embedding.api_key" type="password" placeholder="留空则复用全局 API Key" class="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                </div>
+
+                <!-- Embedding Test & Diagnostics Action Card -->
+                <div class="pt-3 border-t border-slate-100 space-y-3">
+                  <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center gap-3">
+                      <button 
+                        @click="testEmbeddingLatency" 
+                        :disabled="testingEmbedding || !modelConfig.embedding || !modelConfig.embedding.enabled" 
+                        class="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-xs transition flex items-center gap-2 cursor-pointer"
+                        type="button"
+                      >
+                        <i :class="testingEmbedding ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-vial-virus text-indigo-400'"></i>
+                        <span>{{ testingEmbedding ? '正在测试 Embedding 向量生成...' : '🧪 测试 Embedding 模型连通性' }}</span>
+                      </button>
+                      <span class="text-xs text-slate-500 font-mono hidden sm:inline">
+                        测试目标: {{ modelConfig.embedding ? (modelConfig.embedding.model || 'text-embedding-v3') : '' }}
+                      </span>
+                    </div>
+                    <span class="text-[11px] text-slate-400">调用真实端点生成测试向量，校验密钥鉴权与特征维度</span>
+                  </div>
+
+                  <!-- Embedding Test Result Display -->
+                  <div v-if="embeddingTestResult" :class="embeddingTestResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'" class="p-4 rounded-xl border text-xs space-y-2.5 shadow-2xs">
+                    <div class="flex items-center justify-between font-bold">
+                      <span class="flex items-center gap-1.5">
+                        <i :class="embeddingTestResult.success ? 'fa-solid fa-circle-check text-emerald-600' : 'fa-solid fa-circle-xmark text-rose-600'"></i>
+                        {{ embeddingTestResult.success ? 'Embedding 测试成功 (Connection & Vector Generated)' : 'Embedding 测试失败 (Connection Failed)' }}
+                      </span>
+                      <div class="flex items-center gap-2 font-mono">
+                        <span class="bg-white/85 px-2.5 py-1 rounded-md border text-slate-800 shadow-2xs">
+                          延迟: {{ embeddingTestResult.latency_ms }} ms
+                        </span>
+                        <span v-if="embeddingTestResult.dimensions" class="bg-indigo-100 text-indigo-800 px-2.5 py-1 rounded-md border border-indigo-200 shadow-2xs font-semibold">
+                          特征维度: {{ embeddingTestResult.dimensions }} 维
+                        </span>
+                      </div>
+                    </div>
+
+                    <div class="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600 font-mono">
+                      <span v-if="embeddingTestResult.endpoint_used">📍 调通端点: {{ embeddingTestResult.endpoint_used }}</span>
+                      <span v-if="embeddingTestResult.tokens_used">📊 消耗 Token: {{ embeddingTestResult.tokens_used }}</span>
+                      <span v-if="embeddingTestResult.model">🤖 响应模型: {{ embeddingTestResult.model }}</span>
+                    </div>
+
+                    <!-- Vector Preview Chips -->
+                    <div v-if="embeddingTestResult.embedding_preview && embeddingTestResult.embedding_preview.length > 0" class="p-2.5 bg-white/90 rounded-lg border border-slate-200 space-y-1">
+                      <div class="flex items-center justify-between text-[11px] font-semibold text-slate-700">
+                        <span>前 6 维向量抽样特征 (Feature Vector Preview):</span>
+                        <span class="font-mono text-slate-400 text-[10px]">float32 归一化</span>
+                      </div>
+                      <div class="flex flex-wrap gap-1.5 pt-0.5">
+                        <span v-for="(val, idx) in embeddingTestResult.embedding_preview" :key="idx" class="px-2 py-0.5 bg-slate-100 border border-slate-200 rounded font-mono text-[11px] text-indigo-700 font-semibold">
+                          [{{ idx }}] {{ val >= 0 ? '+' + val.toFixed(4) : val.toFixed(4) }}
+                        </span>
+                        <span class="px-1.5 py-0.5 text-slate-400 font-mono text-[11px]">...</span>
+                      </div>
+                    </div>
+
+                    <p v-if="embeddingTestResult.error" class="text-rose-600 font-mono bg-white/90 p-2.5 rounded-lg border border-rose-200 whitespace-pre-wrap leading-relaxed">{{ embeddingTestResult.error }}</p>
                   </div>
                 </div>
               </div>
@@ -8420,9 +8505,13 @@
         const showApiKey = ref(false);
         const fetchingModels = ref(false);
         const fetchedModels = ref([]);
+        const fetchedEmbeddingModels = ref([]);
         const fetchEndpointUsed = ref('');
         const testingLatency = ref(false);
         const testResult = ref(null);
+        const isCustomEmbeddingInput = ref(false);
+        const testingEmbedding = ref(false);
+        const embeddingTestResult = ref(null);
         const savingSettings = ref(false);
         const providerPresets = ref([]);
         const activeModuleTab = ref('insight_extraction');
@@ -8486,6 +8575,55 @@
           return Array.from(new Set(list.filter(Boolean)));
         });
 
+        const allSelectableEmbeddingModels = computed(() => {
+          const list = [];
+          const curProvider = (modelConfig.value.embedding?.provider || modelConfig.value.provider || 'qwen');
+          // 1. Current provider preset recommended models first
+          if (providerPresets.value) {
+            const curPreset = providerPresets.value.find(p => p.id === curProvider);
+            if (curPreset && curPreset.recommended_embedding_models) {
+              list.push(...curPreset.recommended_embedding_models);
+            }
+          }
+          // 2. Fetched embedding models from endpoint
+          if (fetchedEmbeddingModels.value && fetchedEmbeddingModels.value.length > 0) {
+            list.push(...fetchedEmbeddingModels.value);
+          }
+          // 3. Fallback from fetched general models matching embedding keywords
+          if (fetchedModels.value && fetchedModels.value.length > 0) {
+            fetchedModels.value.forEach(m => {
+              const ml = m.toLowerCase();
+              if (ml.includes('embed') || ml.includes('bge') || ml.includes('bce') || ml.includes('gte') || ml.includes('e5')) {
+                list.push(m);
+              }
+            });
+          }
+          // 4. All other preset recommended embedding models
+          if (providerPresets.value) {
+            providerPresets.value.forEach(p => {
+              if (p.recommended_embedding_models) list.push(...p.recommended_embedding_models);
+            });
+          }
+          // 5. Popular baseline models
+          list.push(
+            'text-embedding-v3',
+            'text-embedding-async-v1',
+            'openai/text-embedding-3-small',
+            'openai/text-embedding-3-large',
+            'text-embedding-3-small',
+            'text-embedding-3-large',
+            'BAAI/bge-m3',
+            'BAAI/bge-large-zh-v1.5',
+            'embedding-3',
+            'bge-m3'
+          );
+          // 6. Current modelConfig.embedding.model
+          if (modelConfig.value.embedding && modelConfig.value.embedding.model) {
+            list.push(modelConfig.value.embedding.model);
+          }
+          return Array.from(new Set(list.filter(Boolean)));
+        });
+
         const getRecommendedMaxTokens = (mod) => {
           switch (mod) {
             case 'insight_extraction': return 8192;
@@ -8525,7 +8663,9 @@
             modelConfig.value.multimodal.model = preset.default_vision_model;
           }
           if (modelConfig.value.embedding) {
-            if (preset.id && preset.id.startsWith('qwen')) {
+            if (preset.default_embedding_model) {
+              modelConfig.value.embedding.model = preset.default_embedding_model;
+            } else if (preset.id && preset.id.startsWith('qwen')) {
               modelConfig.value.embedding.provider = 'qwen';
               modelConfig.value.embedding.model = 'text-embedding-v3';
             } else if (preset.id === 'openrouter') {
@@ -8534,6 +8674,9 @@
             } else if (preset.id === 'openai') {
               modelConfig.value.embedding.provider = 'openai';
               modelConfig.value.embedding.model = 'text-embedding-3-small';
+            }
+            if (preset.recommended_embedding_models) {
+              fetchedEmbeddingModels.value = preset.recommended_embedding_models;
             }
           }
           if (preset.recommended_models && preset.recommended_models.length > 0) {
@@ -8613,7 +8756,13 @@
               };
             }
             modelConfig.value = data;
-            if (data.presets) providerPresets.value = data.presets;
+            if (data.presets) {
+              providerPresets.value = data.presets;
+              const curPreset = data.presets.find(p => p.id === (data.embedding?.provider || data.provider));
+              if (curPreset && curPreset.recommended_embedding_models) {
+                fetchedEmbeddingModels.value = curPreset.recommended_embedding_models;
+              }
+            }
           } catch(e) { console.error(e); }
         };
 
@@ -8632,6 +8781,9 @@
             const data = await res.json();
             if (data.success) {
               fetchedModels.value = data.models;
+              if (data.embedding_models && data.embedding_models.length > 0) {
+                fetchedEmbeddingModels.value = data.embedding_models;
+              }
               fetchEndpointUsed.value = data.endpoint_used || '';
             } else {
               alert(data.error || '拉取模型列表失败');
@@ -8700,6 +8852,40 @@
             testResult.value = { success: false, latency_ms: 0, error: e.message };
           } finally {
             testingLatency.value = false;
+          }
+        };
+
+        const testEmbeddingLatency = async () => {
+          if (!modelConfig.value || !modelConfig.value.embedding) return;
+          testingEmbedding.value = true;
+          embeddingTestResult.value = null;
+          try {
+            const emb = modelConfig.value.embedding;
+            const res = await fetch('/api/v1/settings/models/test-embedding', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                provider: emb.provider || 'qwen',
+                base_url: emb.base_url || modelConfig.value.base_url,
+                api_key: emb.api_key || modelConfig.value.api_key,
+                model: emb.model || 'text-embedding-v3',
+                dimensions: emb.dimensions || null,
+                test_text: 'ChatInsight 向量语义检索与嵌入模型连通性测试'
+              })
+            });
+            const data = await res.json();
+            embeddingTestResult.value = data;
+          } catch(e) {
+            embeddingTestResult.value = {
+              success: false,
+              latency_ms: 0,
+              dimensions: 0,
+              embedding_preview: [],
+              model: modelConfig.value.embedding.model,
+              error: '网络请求发生异常: ' + e.message
+            };
+          } finally {
+            testingEmbedding.value = false;
           }
         };
 
@@ -12209,6 +12395,12 @@
           loadModelSettings,
           fetchModelsList,
           testCurrentModelLatency,
+          allSelectableEmbeddingModels,
+          isCustomEmbeddingInput,
+          testingEmbedding,
+          embeddingTestResult,
+          testEmbeddingLatency,
+          fetchedEmbeddingModels,
           applyDefaultModelToAllModules,
           applyReasoningEffortToAllModules,
           saveModelSettings,
