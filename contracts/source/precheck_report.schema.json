@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PrecheckReport",
+  "type": "object",
+  "required": [
+    "scan_id",
+    "source_root_path",
+    "summary",
+    "blocking_issues",
+    "warnings",
+    "generated_at"
+  ],
+  "properties": {
+    "scan_id": {
+      "type": "string"
+    },
+    "source_root_path": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "conversation_count",
+        "message_drafts",
+        "media_files",
+        "explicit_media_links",
+        "unresolved_image_placeholders",
+        "parse_errors"
+      ],
+      "properties": {
+        "conversation_count": { "type": "integer", "minimum": 0 },
+        "message_drafts": { "type": "integer", "minimum": 0 },
+        "media_files": { "type": "integer", "minimum": 0 },
+        "explicit_media_links": { "type": "integer", "minimum": 0 },
+        "unresolved_image_placeholders": { "type": "integer", "minimum": 0 },
+        "parse_errors": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "source_file": { "type": ["string", "null"] },
+          "line": { "type": ["integer", "null"] },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "source_file": { "type": ["string", "null"] },
+          "line": { "type": ["integer", "null"] },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": true
+}

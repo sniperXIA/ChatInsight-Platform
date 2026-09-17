@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceMedia",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "media_external_id",
+    "source_message_id",
+    "order",
+    "kind",
+    "relative_path",
+    "sha256",
+    "size_bytes"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "media_external_id": {
+      "type": "string"
+    },
+    "source_message_id": {
+      "type": "string"
+    },
+    "order": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["image", "video", "audio", "document"]
+    },
+    "relative_path": {
+      "type": "string"
+    },
+    "sha256": {
+      "type": "string"
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "mime_type": {
+      "type": ["string", "null"]
+    }
+  },
+  "additionalProperties": true
+}

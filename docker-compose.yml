@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  chatinsight:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chatinsight-platform
+    restart: unless-stopped
+    ports:
+      - "${CI_PORT:-8000}:8000"
+    volumes:
+      # Mount database & persistent data
+      - ./chatinsight.db:/app/chatinsight.db
+      - ./data:/app/data
+      - ./logs:/app/logs
+      # Mount raw chat archives (adjust host path as needed on Ubuntu server)
+      - ${CHAT_ARCHIVE_PATH:-./sample_data}:/app/raw_archives:ro
+    env_file:
+      - .env
+    environment:
+      - CI_DATABASE_URL=sqlite+aiosqlite:////app/chatinsight.db
+      - CHAT_ARCHIVE_PATH=/app/raw_archives
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

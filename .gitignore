@@ -1,0 +1,58 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environments
+.venv
+.venv/
+venv/
+ENV/
+env/
+
+# IDE & OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Temporary Edge / Browser test profiles
+temp_edge_prof*
+
+# Pytest & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local SQLite databases and logs
+*.db
+*.db-shm
+*.db-wal
+data/
+derived/
+uploads/
+scratch/
+logs/
+*.log
+
+# Sensitive environment configs
+.env
+.env.*
+!.env.example
+
+# Runtime-generated settings (may contain API keys, tokens, or local paths)
+config/chat_settings.json
+config/model_settings.json
+config/feishu_settings.json
+config/feishu_bitable_settings.json
+
+# Private source archives and local reference repositories
+Demo用户聊天数据/
+references/
+
+# Local debugging and rendered artifacts
+scratch_inspect.py
+temp_app.js
+page_rendered.png

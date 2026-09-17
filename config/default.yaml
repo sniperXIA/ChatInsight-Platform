@@ -1,0 +1,37 @@
+app:
+  environment: local
+  timezone: Asia/Shanghai
+  public_web_base_url: http://localhost:3100
+  api_base_url: http://localhost:8100
+
+storage:
+  raw_archive_root: "D:/玩家群聊天信息2"
+  derived_root: "derived"
+  derived_media_root: "derived/media"
+  materialized_root: "derived/materialized"
+
+import:
+  default_timezone: Asia/Shanghai
+  explicit_media_confidence: 1.0
+  ambiguous_image_auto_confirm_threshold: 0.98
+
+models:
+  provider: openrouter
+  openrouter_base_url: "https://openrouter.ai/api/v1"
+  default_vision_model: "qwen/qwen-2.5-vl-72b-instruct"
+  default_text_model: "deepseek/deepseek-chat"
+  request_timeout_seconds: 60
+  max_retries: 3
+
+media:
+  image_max_pixels: 40000000
+  image_max_bytes: 30000000
+  video_max_bytes: 2000000000
+  video_max_duration_seconds: 1800
+  keyframe_interval_seconds: 5
+  scene_threshold: 0.35
+  perceptual_hash_distance: 6
+
+privacy:
+  default_display_mode: anonymized
+  audit_media_access: true

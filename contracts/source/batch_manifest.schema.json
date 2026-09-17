@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceBatchManifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "batch_id",
+    "source",
+    "conversation_external_id",
+    "conversation_name",
+    "timezone",
+    "exported_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "batch_id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["wechat_archive", "api_ingest", "file_upload"]
+    },
+    "conversation_external_id": {
+      "type": "string"
+    },
+    "conversation_name": {
+      "type": "string"
+    },
+    "timezone": {
+      "type": "string",
+      "default": "Asia/Shanghai"
+    },
+    "exported_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "message_file": {
+      "type": "string",
+      "default": "messages.jsonl"
+    },
+    "media_manifest_file": {
+      "type": "string",
+      "default": "media_manifest.jsonl"
+    },
+    "crawler_version": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

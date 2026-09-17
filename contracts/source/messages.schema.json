@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceMessage",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source_message_id",
+    "sequence",
+    "sent_at",
+    "sender",
+    "text"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "source_message_id": {
+      "type": "string"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sent_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sender": {
+      "type": "object",
+      "required": ["display_name"],
+      "properties": {
+        "source_participant_id": {
+          "type": ["string", "null"]
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "role_hint": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "text": {
+      "type": "string"
+    },
+    "quoted_message_id": {
+      "type": ["string", "null"]
+    },
+    "mentions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "media_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["media_external_id", "order"],
+        "properties": {
+          "media_external_id": {
+            "type": "string"
+          },
+          "order": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "default": []
+    }
+  },
+  "additionalProperties": true
+}
