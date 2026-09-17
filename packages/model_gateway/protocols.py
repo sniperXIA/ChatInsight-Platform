@@ -58,3 +58,17 @@ class ASRProvider(Protocol):
     ) -> tuple[str, list[dict[str, Any]]]:
         """Returns (full_transcript, segments)."""
         ...
+
+
+class EmbeddingProvider(Protocol):
+    """Protocol for Dense Vector Embedding Model."""
+
+    async def generate_embeddings(
+        self,
+        texts: list[str],
+        model: str | None = None,
+        **kwargs: Any,
+    ) -> tuple[list[list[float]], dict[str, Any]]:
+        """Returns (list_of_embeddings, usage_info)."""
+        ...
+

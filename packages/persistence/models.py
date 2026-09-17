@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     JSON,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -473,5 +474,45 @@ class InsightPushRecord(Base):
     error_message = Column(Text, nullable=True)
     operator = Column(String(64), nullable=False, default="user")
     created_at = Column(DateTime, nullable=False, default=utcnow, index=True)
+
+
+class MessageContextChunk(Base):
+    """Level 1: 消息上下文微切片向量索引表 (带前后文窗口与多模态OCR)"""
+    __tablename__ = "message_context_chunk"
+
+    id = Column(String(36), primary_key=True, default=generate_id)
+    workspace_id = Column(String(36), ForeignKey("workspace.id"), nullable=False, index=True)
+    conversation_id = Column(String(36), ForeignKey("conversation.id"), nullable=False, index=True)
+    center_message_id = Column(String(36), ForeignKey("message.id"), nullable=False, index=True)
+    context_text = Column(Text, nullable=False)
+    text_sha256 = Column(String(64), nullable=False, index=True)
+    embedding = Column(LargeBinary, nullable=True)
+    embedding_model = Column(String(64), nullable=True)
+    dimension = Column(Integer, nullable=True, default=1536)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("center_message_id", "embedding_model", name="uq_chunk_msg_model"),
+    )
+
+
+class TopicVector(Base):
+    """Level 2: 知识库主题与洞察语义向量索引表"""
+    __tablename__ = "topic_vector"
+
+    id = Column(String(36), primary_key=True, default=generate_id)
+    workspace_id = Column(String(36), ForeignKey("workspace.id"), nullable=False, index=True)
+    topic_id = Column(String(36), ForeignKey("topic.id"), nullable=False, index=True)
+    text_repr = Column(Text, nullable=False)
+    text_sha256 = Column(String(64), nullable=False, index=True)
+    embedding = Column(LargeBinary, nullable=False)
+    embedding_model = Column(String(64), nullable=False)
+    dimension = Column(Integer, nullable=False, default=1536)
+    updated_at = Column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("topic_id", "embedding_model", name="uq_topic_vector_model"),
+    )
+
 
 

@@ -5,6 +5,9 @@ from typing import Optional
 from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.insights.tag_manager import BUILTIN_TAGS
+from packages.model_gateway.gateway import ModelGateway
+from packages.model_gateway.settings_manager import SettingsManager
 from packages.persistence.models import (
     Conversation,
     Insight,
@@ -13,7 +16,8 @@ from packages.persistence.models import (
     Message,
     Topic,
 )
-from packages.insights.tag_manager import BUILTIN_TAGS
+from packages.retrieval.vector_math import cosine_similarity, reciprocal_rank_fusion
+from packages.retrieval.vector_service import VectorService
 from packages.search.contracts import (
     HybridSearchResponse,
     SearchFilter,
@@ -33,10 +37,17 @@ STOPWORDS = {
 
 
 class HybridSearchEngine:
-    """Hybrid search engine combining lexical keyword matching, token similarity, and multi-dimensional filtering."""
+    """Hybrid search engine combining lexical keyword matching, token similarity, and dense vector RRF ranking."""
 
-    def __init__(self, session: AsyncSession):
+    def __init__(
+        self,
+        session: AsyncSession,
+        vector_service: Optional[VectorService] = None,
+        model_gateway: Optional[ModelGateway] = None,
+    ):
         self.session = session
+        self.gateway = model_gateway or ModelGateway()
+        self.vector_service = vector_service or VectorService(session, self.gateway)
 
     def _detect_query_modules(self, query: str) -> set[str]:
         """Detects matching module categories, keys and names from query using taxonomy tags."""
@@ -246,6 +257,52 @@ class HybridSearchEngine:
                         metadata={"kind": media.kind, "media_id": media.id},
                     )
                 )
+
+        # RRF Dense Vector Re-ranking
+        settings = SettingsManager.get_settings()
+        embedding_cfg = getattr(settings, "embedding", None)
+        vector_enabled = embedding_cfg.enabled if embedding_cfg else True
+
+        if vector_enabled and results and self.vector_service:
+            try:
+                query_vec = await self.vector_service.embed_single(clean_q)
+                dense_ranked: list[tuple[SearchResultItem, float]] = []
+
+                for item in results:
+                    dense_sim = 0.0
+                    if item.entity_type == "topic":
+                        topic_obj = next((t for t in topics if t.id == item.entity_id), None)
+                        if topic_obj:
+                            t_vec = await self.vector_service.get_or_create_topic_vector(topic_obj)
+                            dense_sim = cosine_similarity(query_vec, t_vec)
+                    elif item.entity_type == "insight":
+                        ins_obj = next((ins for ins in insights if ins.id == item.entity_id), None)
+                        if ins_obj:
+                            ins_vec = await self.vector_service.get_insight_vector(ins_obj)
+                            dense_sim = cosine_similarity(query_vec, ins_vec)
+                    elif item.entity_type == "message":
+                        msg_vec = await self.vector_service.embed_single(item.snippet)
+                        dense_sim = cosine_similarity(query_vec, msg_vec)
+
+                    if dense_sim > 0:
+                        dense_ranked.append((item, dense_sim))
+
+                if dense_ranked:
+                    dense_ranked.sort(key=lambda x: x[1], reverse=True)
+                    sparse_ranked = [(item, item.score) for item in results]
+                    fused = reciprocal_rank_fusion(
+                        sparse_items=sparse_ranked,
+                        dense_items=dense_ranked,
+                        k=60,
+                        weight_sparse=1.0,
+                        weight_dense=1.2,
+                    )
+                    results = []
+                    for itm, fscore in fused:
+                        itm.score = round(fscore * 60.0, 3)
+                        results.append(itm)
+            except Exception:
+                pass
 
         # Sort descending by relevance score
         results.sort(key=lambda x: x.score, reverse=True)

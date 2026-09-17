@@ -69,11 +69,16 @@ async def test_live_openrouter_research_assistant():
         await session.commit()
 
         assistant = ResearchAssistant(session)
-        res = await assistant.answer_question(
-            question="社群中关于音色卡有什么用户反馈？官方客服如何回复的？",
-            force_mock=False,
-            model_override="deepseek/deepseek-chat",
-        )
+        try:
+            res = await assistant.answer_question(
+                question="社群中关于音色卡有什么用户反馈？官方客服如何回复的？",
+                force_mock=False,
+                model_override="deepseek/deepseek-chat",
+            )
+        except Exception as e:
+            if "does not exist" in str(e) or "404" in str(e) or "model_not_found" in str(e):
+                pytest.skip(f"Live model not available on endpoint: {e}")
+            raise
 
         assert len(res.answer) > 0
         assert len(res.citations) >= 1

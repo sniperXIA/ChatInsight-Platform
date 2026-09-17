@@ -7512,9 +7512,78 @@
               </div>
             </div>
 
+            <!-- 3. RAG 向量检索与嵌入模型设置 (Embedding Config) -->
+            <div class="p-5 bg-slate-50 rounded-xl border border-slate-200 space-y-4">
+              <div class="flex items-center justify-between">
+                <div>
+                  <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+                    <i class="fa-solid fa-vector-square text-indigo-600"></i>
+                    <span>3. RAG 语义检索与向量嵌入模型 (Embedding Model)</span>
+                    <span v-if="modelConfig.embedding" class="text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold" :class="modelConfig.embedding.enabled ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-slate-200 text-slate-600'">
+                      {{ modelConfig.embedding.enabled ? '🟢 向量增强已开启' : '⚪ 已禁用 (词法回退)' }}
+                    </span>
+                  </h4>
+                  <p class="text-[11px] text-slate-500 mt-1">
+                    用于社群消息 Context Chunking、话题聚类密集余弦初筛、BM25 + 向量倒数排名融合 (RRF) 与洞察事实断言校验。若禁用或模型未响应，流水线将自动平滑降级为纯词法匹配。
+                  </p>
+                </div>
+                <div v-if="modelConfig.embedding" class="flex items-center gap-2">
+                  <label class="flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox" v-model="modelConfig.embedding.enabled" class="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4" />
+                    <span class="text-xs font-semibold text-slate-700">{{ modelConfig.embedding.enabled ? '启用向量嵌入' : '禁用向量' }}</span>
+                  </label>
+                </div>
+              </div>
+
+              <div v-if="modelConfig.embedding" class="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-3">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <!-- Provider -->
+                  <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Embedding 协议 / 服务商</label>
+                    <select v-model="modelConfig.embedding.provider" class="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-indigo-500">
+                      <option value="qwen">通义千问 / DashScope</option>
+                      <option value="openrouter">OpenRouter 兼容端点</option>
+                      <option value="openai">OpenAI 官方端点</option>
+                      <option value="mock">本地测试环境 (Mock 离线哈希)</option>
+                      <option value="custom">自定义 OpenAI 规范端点</option>
+                    </select>
+                  </div>
+                  <!-- Model Name -->
+                  <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">向量模型名称 (Embedding Model)</label>
+                    <input v-model="modelConfig.embedding.model" type="text" placeholder="如 text-embedding-v3 / text-embedding-3-small" class="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                  <!-- Dimensions & Batch Size -->
+                  <div class="grid grid-cols-2 gap-2">
+                    <div>
+                      <label class="block text-xs font-semibold text-slate-700 mb-1">向量维度 (Dims)</label>
+                      <input v-model.number="modelConfig.embedding.dimensions" type="number" placeholder="1024" class="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-semibold text-slate-700 mb-1">批处理大小 (Batch)</label>
+                      <input v-model.number="modelConfig.embedding.batch_size" type="number" min="1" max="128" placeholder="16" class="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                  <!-- Custom Base URL -->
+                  <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">独立 Base URL <span class="text-slate-400 font-normal">(选填，留空自动复用全局端点)</span></label>
+                    <input v-model="modelConfig.embedding.base_url" type="text" placeholder="留空则复用全局 Base URL" class="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                  <!-- Custom API Key -->
+                  <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">独立 API Key <span class="text-slate-400 font-normal">(选填，留空自动复用全局密钥)</span></label>
+                    <input v-model="modelConfig.embedding.api_key" type="password" placeholder="留空则复用全局 API Key" class="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- Model Latency & Connectivity Test Box -->
             <div class="p-5 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
-              <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider">3. 连通性测试与延迟报告</h4>
+              <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider">4. 连通性测试与延迟报告</h4>
               <div class="flex flex-wrap items-center gap-3">
                 <button 
                   @click="testCurrentModelLatency" 
@@ -8383,6 +8452,7 @@
           clustering_judge: { model: 'qwen3.8-max', temperature: 0.0, top_p: 1.0, top_k: null, max_tokens: 2048, enable_thinking: true, reasoning_effort: 'medium', thinking_budget: 0, preserve_thinking: false, system_prompt: '' },
           research_assistant: { model: 'qwen3.8-max', temperature: 0.2, top_p: 0.95, top_k: null, max_tokens: 8192, enable_thinking: true, reasoning_effort: 'high', thinking_budget: 0, preserve_thinking: false, system_prompt: '' },
           voc_report: { model: 'qwen3.8-max', temperature: 0.3, top_p: 0.95, top_k: null, max_tokens: 8192, enable_thinking: true, reasoning_effort: 'high', thinking_budget: 0, preserve_thinking: false, system_prompt: '' },
+          embedding: { enabled: true, provider: 'qwen', model: 'text-embedding-v3', base_url: '', api_key: '', dimensions: 1024, batch_size: 16 },
         });
 
         const currentModuleConfig = computed(() => {
@@ -8454,6 +8524,18 @@
           if (preset.default_vision_model && modelConfig.value.multimodal) {
             modelConfig.value.multimodal.model = preset.default_vision_model;
           }
+          if (modelConfig.value.embedding) {
+            if (preset.id && preset.id.startsWith('qwen')) {
+              modelConfig.value.embedding.provider = 'qwen';
+              modelConfig.value.embedding.model = 'text-embedding-v3';
+            } else if (preset.id === 'openrouter') {
+              modelConfig.value.embedding.provider = 'openrouter';
+              modelConfig.value.embedding.model = 'openai/text-embedding-3-small';
+            } else if (preset.id === 'openai') {
+              modelConfig.value.embedding.provider = 'openai';
+              modelConfig.value.embedding.model = 'text-embedding-3-small';
+            }
+          }
           if (preset.recommended_models && preset.recommended_models.length > 0) {
             fetchedModels.value = preset.recommended_models;
           }
@@ -8519,6 +8601,17 @@
           try {
             const res = await fetch('/api/v1/settings/models');
             const data = await res.json();
+            if (!data.embedding) {
+              data.embedding = {
+                enabled: true,
+                provider: 'qwen',
+                model: 'text-embedding-v3',
+                base_url: '',
+                api_key: '',
+                dimensions: 1024,
+                batch_size: 16
+              };
+            }
             modelConfig.value = data;
             if (data.presets) providerPresets.value = data.presets;
           } catch(e) { console.error(e); }

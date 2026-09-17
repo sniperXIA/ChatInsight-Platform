@@ -31,6 +31,8 @@ class InsightExtractor:
         self.analysis_service = AnalysisService(session)
         self.checker = FactualChecker()
         self.repo = RepositoryRegistry(session)
+        from packages.retrieval.vector_service import VectorService
+        self.vector_service = VectorService(session, self.gateway)
 
     def _generate_dynamic_heuristic_insight(self, packet: EpisodeContextPacket) -> InsightExtractionBatchOutput:
         """Dynamically generates distinct, fine-grained, realistic insights based on actual message contents and symptoms."""
@@ -525,7 +527,9 @@ class InsightExtractor:
         from packages.insights.tag_manager import TagManager
 
         for draft in output.insights:
-            check_result = self.checker.check_insight_claims(draft, packet)
+            check_result = await self.checker.check_insight_claims_semantic(
+                draft, packet, vector_service=self.vector_service, force_mock=force_mock
+            )
 
             # Resolve hierarchical category and tags from TagManager
             analysis_text = f"{draft.summary} {draft.description} {ep.title}"

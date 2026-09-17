@@ -6,17 +6,19 @@ from packages.clustering.candidate_ranker import CandidateRanker
 from packages.clustering.contracts import JudgeDecision, PairwiseJudgeOutput
 from packages.clustering.pairwise_judge import PairwiseJudge
 from packages.model_gateway.gateway import ModelGateway
-from packages.persistence.models import Insight, Topic, TopicInsightLink
+from packages.persistence.models import Insight, Topic
 from packages.persistence.repositories.registry import RepositoryRegistry
+from packages.retrieval.vector_service import VectorService
 
 
 class ClusterManager:
-    """Orchestrates Two-Stage Clustering: Candidate Recall + Pairwise LLM Judge."""
+    """Orchestrates two-stage clustering: candidate ranking via dense vector / lexical similarity followed by pairwise LLM adjudication."""
 
     def __init__(self, session: AsyncSession, model_gateway: ModelGateway | None = None):
         self.session = session
         self.gateway = model_gateway or ModelGateway()
-        self.ranker = CandidateRanker()
+        self.vector_service = VectorService(session, self.gateway)
+        self.ranker = CandidateRanker(vector_service=self.vector_service)
         self.judge = PairwiseJudge(session, self.gateway)
         self.repo = RepositoryRegistry(session)
 
@@ -30,9 +32,14 @@ class ClusterManager:
         if not insight:
             raise FileNotFoundError(f"Insight {insight_id} not found")
 
-        # 1. Candidate Recall Stage
+        # 1. Candidate Recall Stage (Dense Semantic Vector + Lexical Fallback)
         active_topics = await self.repo.get_active_topics_by_module(insight.module)
-        ranked_candidates = self.ranker.rank_candidate_topics(insight, active_topics, min_threshold=0.25)
+        ranked_candidates = await self.ranker.rank_candidate_topics_async(
+            insight=insight,
+            candidate_topics=active_topics,
+            min_threshold=0.25,
+            force_mock=force_mock,
+        )
 
         # 2. Pairwise Judge Stage (evaluate top candidate)
         if ranked_candidates:

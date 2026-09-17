@@ -171,6 +171,13 @@ class ModuleConfigItem(BaseModel):
     system_prompt: str = Field(default="", description="该模块的独立 System Prompt")
 
 
+class EmbeddingConfigItem(BaseModel):
+    enabled: bool = Field(default=True, description="是否启用稠密向量检索与语义聚类")
+    model: str = Field(default="text-embedding-v3", description="向量嵌入模型名称 (如 text-embedding-v3, text-embedding-3-small, bge-large-zh)")
+    dimension: int = Field(default=1536, ge=64, le=4096, description="向量维度")
+    batch_size: int = Field(default=16, ge=1, le=128, description="单次向量化请求批次上限")
+
+
 DEFAULT_SYSTEM_PROMPTS: dict[str, str] = {
     "multimodal": (
         "你是一个严格的产品多模态用户反馈分析专家。\n"
@@ -584,6 +591,14 @@ class ModelSettingsConfig(BaseModel):
             max_tokens=8192,
             reasoning_effort="high",
             system_prompt=DEFAULT_SYSTEM_PROMPTS["voc_report"],
+        )
+    )
+    embedding: EmbeddingConfigItem = Field(
+        default_factory=lambda: EmbeddingConfigItem(
+            enabled=True,
+            model="text-embedding-v3",
+            dimension=1536,
+            batch_size=16,
         )
     )
 

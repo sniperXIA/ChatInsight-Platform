@@ -79,3 +79,46 @@ class MockModelAdapter:
         usage = {"prompt_tokens": 200, "completion_tokens": 100, "total_tokens": 300}
         return response_schema.model_construct(), usage
 
+    async def generate_embeddings(
+        self,
+        texts: list[str],
+        model: str | None = None,
+        dimension: int = 1536,
+        **kwargs: Any,
+    ) -> tuple[list[list[float]], dict[str, Any]]:
+        self.call_count += 1
+        import hashlib
+        import math
+        import re
+
+        vectors: list[list[float]] = []
+        for text in texts:
+            vec = [0.0] * dimension
+            cleaned = re.sub(r"[^\w\u4e00-\u9fa5]", " ", (text or "").lower()).strip()
+            words = cleaned.split()
+            ngrams = []
+            for w in words:
+                ngrams.append(w)
+                for i in range(len(w)):
+                    ngrams.append(w[i])
+                    if i < len(w) - 1:
+                        ngrams.append(w[i : i + 2])
+
+            if not ngrams:
+                ngrams = ["<empty>"]
+
+            for token in ngrams:
+                h = int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16)
+                idx = h % dimension
+                sign = 1.0 if ((h >> 16) % 2 == 0) else -1.0
+                vec[idx] += sign
+
+            norm = math.sqrt(sum(x * x for x in vec))
+            if norm > 0:
+                vec = [round(x / norm, 6) for x in vec]
+            vectors.append(vec)
+
+        usage = {"prompt_tokens": len(texts) * 10, "total_tokens": len(texts) * 10}
+        return vectors, usage
+
+

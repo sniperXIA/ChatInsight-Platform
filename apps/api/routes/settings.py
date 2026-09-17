@@ -19,6 +19,7 @@ from packages.model_gateway.gateway import ModelGateway
 from packages.model_gateway.settings_manager import (
     DEFAULT_SYSTEM_PROMPTS,
     PROVIDER_PRESETS,
+    EmbeddingConfigItem,
     ModelSettingsConfig,
     ModuleConfigItem,
     SettingsManager,
@@ -53,6 +54,7 @@ class ModelSettingsResponse(BaseModel):
     clustering_judge: ModuleConfigItem
     research_assistant: ModuleConfigItem
     voc_report: ModuleConfigItem
+    embedding: Optional[EmbeddingConfigItem] = None
 
     presets: list[dict[str, Any]] = Field(default_factory=list, description="内置服务商预设")
     default_system_prompts: dict[str, str] = Field(default_factory=dict, description="系统默认提示词")
@@ -82,6 +84,7 @@ class UpdateModelSettingsRequest(BaseModel):
     clustering_judge: Optional[ModuleConfigItem] = None
     research_assistant: Optional[ModuleConfigItem] = None
     voc_report: Optional[ModuleConfigItem] = None
+    embedding: Optional[EmbeddingConfigItem] = None
 
 
 class FetchModelsRequest(BaseModel):
@@ -163,6 +166,7 @@ def build_response_from_cfg(cfg: ModelSettingsConfig) -> ModelSettingsResponse:
         clustering_judge=cfg.clustering_judge,
         research_assistant=cfg.research_assistant,
         voc_report=cfg.voc_report,
+        embedding=getattr(cfg, "embedding", None),
         request_timeout_seconds=getattr(cfg, "request_timeout_seconds", 240.0) or 240.0,
         presets=PROVIDER_PRESETS,
         default_system_prompts=DEFAULT_SYSTEM_PROMPTS,
@@ -299,6 +303,7 @@ async def update_model_settings(payload: UpdateModelSettingsRequest):
         clustering_judge=clustering_judge,
         research_assistant=research_assistant,
         voc_report=voc_report,
+        embedding=payload.embedding if payload.embedding is not None else getattr(current_cfg, "embedding", EmbeddingConfigItem()),
     )
 
     saved = SettingsManager.save_settings(updated_cfg)

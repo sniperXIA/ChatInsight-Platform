@@ -503,3 +503,52 @@ class OpenRouterAdapter:
             return arr_match.group(1).strip()
 
         return trimmed
+
+    async def generate_embeddings(
+        self,
+        texts: list[str],
+        model: str | None = None,
+        batch_size: int = 16,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> tuple[list[list[float]], dict[str, Any]]:
+        """
+        Generate dense embeddings for a batch of texts using OpenAI-compatible /embeddings API.
+        Returns: (list_of_float_vectors, token_usage_dict)
+        """
+        if not texts:
+            return [], {"prompt_tokens": 0, "total_tokens": 0}
+
+        selected_model = model or "text-embedding-v3"
+        req_timeout = timeout or min(self.timeout, 120.0)
+        timeout_cfg = httpx.Timeout(connect=15.0, read=req_timeout, write=30.0, pool=30.0)
+
+        endpoint = f"{self.base_url}/embeddings"
+        all_embeddings: list[list[float]] = []
+        total_prompt_tokens = 0
+
+        async with httpx.AsyncClient(headers=self._get_headers(), timeout=timeout_cfg) as client:
+            for i in range(0, len(texts), max(1, batch_size)):
+                batch = texts[i : i + batch_size]
+                payload = {
+                    "model": selected_model,
+                    "input": batch,
+                }
+                resp = await client.post(endpoint, json=payload)
+                if resp.status_code != 200:
+                    raise ModelProviderError(
+                        f"Embedding API returned status {resp.status_code}: {resp.text[:500]}",
+                        status_code=resp.status_code,
+                        details={"response_text": resp.text[:500]},
+                    )
+                data = resp.json()
+                items = data.get("data", [])
+                items_sorted = sorted(items, key=lambda x: x.get("index", 0))
+                for it in items_sorted:
+                    all_embeddings.append(it.get("embedding", []))
+
+                usage = data.get("usage", {})
+                total_prompt_tokens += usage.get("prompt_tokens", 0)
+
+        return all_embeddings, {"prompt_tokens": total_prompt_tokens, "total_tokens": total_prompt_tokens}
+
