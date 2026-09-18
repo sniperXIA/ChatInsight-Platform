@@ -120,6 +120,7 @@ class HighValueContent(BaseModel):
     critical_insights: list[CriticalInsightItem] = Field(default_factory=list)
     ai_executive_summary: Optional[str] = None
     key_recommendations: list[str] = Field(default_factory=list)
+    rag_evidence_highlights: list[dict[str, Any]] = Field(default_factory=list, description="由 RAG 向量检索库召回的当期社群典型原声切片与事实依据")
 
 
 class VoCReportOutput(BaseModel):

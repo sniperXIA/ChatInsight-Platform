@@ -36,9 +36,9 @@ def dot_product(v1: Sequence[float], v2: Sequence[float]) -> float:
 
 def cosine_similarity(v1: Sequence[float], v2: Sequence[float]) -> float:
     """Computes cosine similarity between two vectors in [-1.0, 1.0]."""
-    if not v1 or not v2:
+    if not v1 or not v2 or len(v1) != len(v2):
         return 0.0
-    n = min(len(v1), len(v2))
+    n = len(v1)
     dot = 0.0
     norm1 = 0.0
     norm2 = 0.0
@@ -71,13 +71,13 @@ def reciprocal_rank_fusion(
 
     # Rank sparse items (1-indexed)
     for rank, (item, _) in enumerate(sparse_items, 1):
-        key = getattr(item, "id", None) or item
+        key = getattr(item, "entity_id", None) or getattr(item, "id", None) or (item if isinstance(item, (str, int)) else id(item))
         item_map[key] = item
         scores[key] = scores.get(key, 0.0) + (weight_sparse / (k + rank))
 
     # Rank dense items (1-indexed)
     for rank, (item, _) in enumerate(dense_items, 1):
-        key = getattr(item, "id", None) or item
+        key = getattr(item, "entity_id", None) or getattr(item, "id", None) or (item if isinstance(item, (str, int)) else id(item))
         item_map[key] = item
         scores[key] = scores.get(key, 0.0) + (weight_dense / (k + rank))
 

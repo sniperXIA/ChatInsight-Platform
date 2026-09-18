@@ -1,15 +1,17 @@
 import hashlib
 import logging
 from datetime import datetime
-from typing import Optional, Sequence
-from sqlalchemy import select
+from typing import Any, Optional, Sequence
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.model_gateway.gateway import ModelGateway
 from packages.model_gateway.settings_manager import SettingsManager
 from packages.persistence.models import (
     Insight,
+    Message,
     MessageContextChunk,
+    Participant,
     Topic,
     TopicVector,
 )
@@ -188,3 +190,221 @@ class VectorService:
 
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored
+
+    async def index_message_chunks(
+        self,
+        conversation_id: str,
+        messages: Optional[Sequence[Message]] = None,
+        window_size: int = 4,
+        force_mock: bool = False,
+    ) -> list[MessageContextChunk]:
+        """
+        Builds and persists sliding window MessageContextChunk items for a conversation.
+        """
+        settings = SettingsManager.get_settings()
+        embedding_cfg = getattr(settings, "embedding", None)
+        selected_model = embedding_cfg.model if embedding_cfg else "text-embedding-v3"
+
+        if messages is None:
+            msg_stmt = (
+                select(Message)
+                .where(Message.conversation_id == conversation_id)
+                .order_by(Message.sent_at.asc())
+            )
+            msg_res = await self.session.execute(msg_stmt)
+            msgs = list(msg_res.scalars().all())
+        else:
+            msgs = list(messages)
+
+        if not msgs:
+            return []
+
+        # Map participants for readable speaker labels
+        p_stmt = select(Participant).where(Participant.workspace_id == msgs[0].workspace_id)
+        p_res = await self.session.execute(p_stmt)
+        part_map = {p.id: p.display_label for p in p_res.scalars().all()}
+
+        created_chunks: list[MessageContextChunk] = []
+        step = max(1, window_size // 2)
+
+        for i in range(0, len(msgs), step):
+            win = msgs[i : i + window_size]
+            if not win:
+                continue
+
+            center_msg = win[len(win) // 2]
+            lines = []
+            for m in win:
+                speaker = part_map.get(m.participant_id, "用户")
+                t_str = m.sent_at.strftime("%H:%M") if m.sent_at else ""
+                lines.append(f"[{t_str}] {speaker}: {m.raw_text.strip()}")
+
+            context_text = "\n".join(lines)
+            text_hash = self.compute_sha256(context_text)
+
+            stmt = select(MessageContextChunk).where(
+                MessageContextChunk.center_message_id == center_msg.id,
+                MessageContextChunk.embedding_model == selected_model,
+            )
+            existing = (await self.session.execute(stmt)).scalar_one_or_none()
+
+            if existing:
+                if existing.text_sha256 != text_hash:
+                    vec = await self.embed_single(context_text, model=selected_model, force_mock=force_mock)
+                    existing.context_text = context_text
+                    existing.text_sha256 = text_hash
+                    existing.embedding = pack_vector(vec)
+                    existing.dimension = len(vec)
+                created_chunks.append(existing)
+            else:
+                vec = await self.embed_single(context_text, model=selected_model, force_mock=force_mock)
+                new_chunk = MessageContextChunk(
+                    workspace_id=center_msg.workspace_id,
+                    conversation_id=conversation_id,
+                    center_message_id=center_msg.id,
+                    context_text=context_text,
+                    text_sha256=text_hash,
+                    embedding=pack_vector(vec),
+                    embedding_model=selected_model,
+                    dimension=len(vec),
+                )
+                self.session.add(new_chunk)
+                created_chunks.append(new_chunk)
+
+        await self.session.flush()
+        return created_chunks
+
+    async def search_dense_candidates(
+        self,
+        query: str,
+        limit: int = 20,
+        entity_types: Sequence[str] = ("topic", "insight", "chunk"),
+        min_score: float = 0.20,
+        force_mock: bool = False,
+    ) -> list[dict[str, Any]]:
+        """
+        Executes first-stage dense semantic vector search across topics, insights, and message chunks.
+        Guarantees high-recall semantic matches even when lexical token overlap is zero.
+        """
+        clean_q = (query or "").strip()
+        if not clean_q:
+            return []
+
+        settings = SettingsManager.get_settings()
+        embedding_cfg = getattr(settings, "embedding", None)
+        if embedding_cfg and not embedding_cfg.enabled and not force_mock:
+            return []
+
+        selected_model = embedding_cfg.model if embedding_cfg else "text-embedding-v3"
+        query_vec = await self.embed_single(clean_q, model=selected_model, force_mock=force_mock)
+        if not query_vec:
+            return []
+
+        candidates: list[dict[str, Any]] = []
+
+        # 1. Search Topics via TopicVector
+        if "topic" in entity_types:
+            topic_stmt = select(Topic).order_by(desc(Topic.feedback_count)).limit(60)
+            topics = (await self.session.execute(topic_stmt)).scalars().all()
+            for t in topics:
+                t_vec = await self.get_or_create_topic_vector(t, force_mock=force_mock)
+                sim = cosine_similarity(query_vec, t_vec)
+                if sim >= min_score:
+                    candidates.append({
+                        "entity_type": "topic",
+                        "entity_id": t.id,
+                        "title": t.title,
+                        "snippet": t.summary[:180],
+                        "score": round(sim, 4),
+                        "evidence_uri": f"chatinsight://topics/{t.id}",
+                        "metadata": {
+                            "module": t.module,
+                            "severity": t.severity,
+                            "status": t.status,
+                            "feedback_count": t.feedback_count,
+                        },
+                        "object": t,
+                    })
+
+        # 2. Search Insights via insight representations
+        if "insight" in entity_types:
+            ins_stmt = select(Insight).order_by(desc(Insight.confidence)).limit(60)
+            insights = (await self.session.execute(ins_stmt)).scalars().all()
+            for ins in insights:
+                ins_vec = await self.get_insight_vector(ins, force_mock=force_mock)
+                sim = cosine_similarity(query_vec, ins_vec)
+                if sim >= min_score:
+                    candidates.append({
+                        "entity_type": "insight",
+                        "entity_id": ins.id,
+                        "title": f"[{ins.insight_type.upper()}] {ins.summary}",
+                        "snippet": ins.description[:180],
+                        "score": round(sim, 4),
+                        "evidence_uri": f"chatinsight://insights/{ins.id}",
+                        "metadata": {
+                            "module": ins.module,
+                            "severity": ins.severity,
+                            "status_in_chat": ins.status_in_chat,
+                            "support_known": ins.support_known_status,
+                        },
+                        "object": ins,
+                    })
+
+        # 3. Search MessageContextChunk
+        if "chunk" in entity_types:
+            chunk_stmt = select(MessageContextChunk).limit(80)
+            chunks = (await self.session.execute(chunk_stmt)).scalars().all()
+
+            # If no chunks yet but messages exist, auto-index up to 30 messages to bootstrap RAG chunk pool
+            if not chunks:
+                msg_sample_stmt = select(Message).order_by(desc(Message.sent_at)).limit(30)
+                sample_msgs = (await self.session.execute(msg_sample_stmt)).scalars().all()
+                if sample_msgs:
+                    conv_ids = list({m.conversation_id for m in sample_msgs})
+                    for cid in conv_ids[:2]:
+                        await self.index_message_chunks(cid, force_mock=force_mock)
+                    chunks = (await self.session.execute(chunk_stmt)).scalars().all()
+
+            for chk in chunks:
+                if chk.embedding:
+                    c_vec = unpack_vector(chk.embedding)
+                else:
+                    c_vec = await self.embed_single(chk.context_text, force_mock=force_mock)
+                sim = cosine_similarity(query_vec, c_vec)
+                if sim >= min_score:
+                    candidates.append({
+                        "entity_type": "chunk",
+                        "entity_id": chk.id,
+                        "title": f"社群原声对话切片 (ID: {chk.id[:8]})",
+                        "snippet": chk.context_text[:180],
+                        "score": round(sim, 4),
+                        "evidence_uri": f"chatinsight://conv/{chk.conversation_id}/msg_{chk.center_message_id}#chunk",
+                        "metadata": {
+                            "conversation_id": chk.conversation_id,
+                            "center_message_id": chk.center_message_id,
+                            "full_context": chk.context_text,
+                        },
+                        "object": chk,
+                    })
+
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        return candidates[:limit]
+
+    async def search_semantic_evidence_for_category(
+        self,
+        category_name: str,
+        limit: int = 5,
+        force_mock: bool = False,
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieves top RAG-grounded quotes, issues, and context snippets for a business category.
+        Used by the VoC reporting engine for executive strategic synthesis.
+        """
+        query = f"社群关于 {category_name} 模块的核心痛点、高频故障与用户真实体验反馈"
+        return await self.search_dense_candidates(
+            query=query,
+            limit=limit,
+            entity_types=("topic", "insight", "chunk"),
+            min_score=0.18,
+            force_mock=force_mock,
+        )

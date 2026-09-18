@@ -34,6 +34,7 @@ from packages.persistence.models import (
     Topic,
     TopicInsightLink,
 )
+from packages.retrieval.vector_service import VectorService
 from packages.search.research_assistant import parse_5w1h_dict
 
 
@@ -44,9 +45,15 @@ class ReportGenerator:
     high-value clustered topics, and critical actionable insights.
     """
 
-    def __init__(self, session: AsyncSession, model_gateway: ModelGateway | None = None):
+    def __init__(
+        self,
+        session: AsyncSession,
+        model_gateway: ModelGateway | None = None,
+        vector_service: Optional[VectorService] = None,
+    ):
         self.session = session
         self.gateway = model_gateway or ModelGateway()
+        self.vector_service = vector_service or VectorService(session, self.gateway)
 
     async def _resolve_period_dates(
         self, period: str = "7d"
@@ -796,30 +803,92 @@ class ReportGenerator:
                 )
             )
 
-        # 6. Strategic Recommendations
-        recommendations = [
-            "【高危排期】针对【启用旅行锁后开机导致扩展卡识别异常】等硬件/固件启动时序故障，建立研发 P1 缺陷建单并发布临时规避指引；",
-            "【预期管理】针对【扩展卡内容价值预期落差】与退货反馈，在商品页与 App 增加详尽音色样例试听及内容预览，防范预期落差；",
-            "【易用性优化】针对多维曲目调式设置困惑与界面字体辨识度诉求，在 App 对应播放界面补齐图文指引并规划黑白高对比度主题；",
-            "【运营闭环】对社群内表达退货诉求或困惑的用户实施主动关怀回访，持续跟踪版本修复后的用户满意度变动。",
-        ]
+        # 6. RAG Grounded Evidence Highlights for Top Alert Modules
+        rag_highlights: list[dict[str, Any]] = []
+        if self.vector_service:
+            focus_cats = [c for c in category_dynamics if c.alert_level in ("critical", "warning")]
+            if not focus_cats and category_dynamics:
+                focus_cats = category_dynamics[:2]
 
-        # 7. AI Executive Summary (Optional or deterministic)
+            for fc in focus_cats[:3]:
+                try:
+                    hits = await self.vector_service.search_semantic_evidence_for_category(
+                        category_name=fc.category_zh,
+                        limit=2,
+                        force_mock=force_mock,
+                    )
+                    for h in hits:
+                        rag_highlights.append({
+                            "category": fc.category_zh,
+                            "title": h["title"],
+                            "snippet": h["snippet"],
+                            "score": h["score"],
+                            "evidence_uri": h.get("evidence_uri", ""),
+                            "quote": h.get("metadata", {}).get("full_context") or h["snippet"],
+                        })
+                except Exception:
+                    pass
+
+        # 7. Strategic Recommendations (Dynamically constructed from critical insights, top categories, and RAG facts)
+        recommendations: list[str] = []
+        if critical_insights:
+            top_crit = critical_insights[0]
+            recommendations.append(
+                f"【高危排期】针对【{top_crit.title}】（{top_crit.symptom[:50]}），建议研发团队建立 P1 缺陷建单并发布临时规避指引与修复补丁；"
+            )
+            if len(critical_insights) > 1:
+                sec_crit = critical_insights[1]
+                recommendations.append(
+                    f"【质量攻坚】重点排查跟进【{sec_crit.title}】，优化核心功能边界时序与容错恢复；"
+                )
+
+        if category_dynamics:
+            top_cat = category_dynamics[0]
+            recommendations.append(
+                f"【体验治理】针对【{top_cat.category_zh}】模块高频反馈（本期共 {top_cat.total_count} 条），强化场景预期管理并在 App 对应交互界面补齐详尽指引；"
+            )
+
+        recommendations.append(
+            "【运营闭环】对社群内表达退货诉求或困惑的用户实施主动关怀回访，持续跟踪版本修复后的用户满意度变动。"
+        )
+
+        # Supplement with high-value topic actions and proactive initiatives to guarantee at least 3 high-impact recommendations
+        for hvt in high_value_topics:
+            if len(recommendations) >= 3:
+                break
+            action_text = hvt.suggested_action or "深入梳理业务操作链路并提供明确容错指引与状态反馈。"
+            rec_entry = f"【专项改进】围绕【{hvt.title}】：{action_text}"
+            if rec_entry not in recommendations:
+                recommendations.append(rec_entry)
+
+        default_fallbacks = [
+            "【研发排期】梳理周期内高频出现的软硬件交互边界时序与容错恢复机制，建立专项缺陷跟进与回归测试验证集。",
+            "【产品体验】强化新特性与复杂操作链路的在端提示与帮助文档，在核心功能入口增加自检与诊断指引。",
+        ]
+        for dfb in default_fallbacks:
+            if len(recommendations) >= 3:
+                break
+            if dfb not in recommendations:
+                recommendations.append(dfb)
+
+        # 8. AI Executive Summary (Optional or deterministic)
         ai_summary: Optional[str] = None
         if include_ai_summary and not force_mock:
             ai_summary = await self._generate_ai_executive_summary(
                 category_dynamics=category_dynamics,
                 critical_insights=critical_insights,
+                rag_highlights=rag_highlights,
                 recommendations=recommendations,
             )
         else:
-            top_cat = category_dynamics[0].category_zh if category_dynamics else "配置与音色"
+            top_cat_zh = category_dynamics[0].category_zh if category_dynamics else "配置与音色"
+            crit_note = f"，其中【{critical_insights[0].title}】引发用户集中关注" if critical_insights else ""
             ai_summary = (
-                f"本报告周期内社群反馈呈现出明显的模块聚集特征，其中【{top_cat}】相关反馈最为密集。"
-                f"核心业务痛点主要集中在两类：一是特定边缘操作链路（如旅行锁开机）下的软硬件枚举与稳定性缺陷，直接影响核心演奏功能；"
-                f"二是扩展卡等高客单价配件的内容透明度不足与预期管理缺位，引发了退货与口碑风险。"
-                f"建议产品与研发团队双轨并进：研发侧优先修复阻断性固件时序，运营与产品侧紧急补齐扩展卡试听物料与曲目调式指引，"
-                f"并建立针对不满意用户的定向回访闭环机制。"
+                f"本报告周期内社群反馈呈现出明显的模块聚集特征，其中【{top_cat_zh}】相关反馈最为密集{crit_note}。"
+                f"核心业务痛点主要集中在两类：一是特定边缘操作链路下的软硬件枚举与稳定性缺陷，直接影响核心演奏与使用功能；"
+                f"二是高客单价配件或新特性的内容透明度不足与预期管理缺位，引发了潜在口碑风险。"
+                f"建议产品与研发团队双轨并进：研发侧优先攻坚阻断性固件与链路时序，运营与产品侧紧急补齐场景化试听与图文指引物料，"
+                f"并建立针对核心反馈用户的定向回访闭环机制。"
             )
 
         return HighValueContent(
@@ -828,24 +897,28 @@ class ReportGenerator:
             critical_insights=critical_insights[:8],
             ai_executive_summary=ai_summary,
             key_recommendations=recommendations,
+            rag_evidence_highlights=rag_highlights,
         )
 
     async def _generate_ai_executive_summary(
         self,
         category_dynamics: list[CategoryDynamicsItem],
         critical_insights: list[CriticalInsightItem],
+        rag_highlights: list[dict[str, Any]],
         recommendations: list[str],
     ) -> str:
-        """Invokes LLM to generate an executive-level strategic analysis."""
+        """Invokes LLM to generate an executive-level strategic analysis grounded on RAG retrieved facts."""
         provider = self.gateway.get_text_provider()
         cat_lines = "\n".join(f"- {c.category_zh}: {c.total_count} 条 (变动: {c.change_pct or 0}%, 预警: {c.alert_level})" for c in category_dynamics[:5])
         ins_lines = "\n".join(f"- [{i.severity_zh}] {i.title}: {i.symptom}" for i in critical_insights[:5])
+        rag_lines = "\n".join(f"- 【{h['category']}】{h['title']}: {h['snippet']}" for h in rag_highlights[:4]) or "（无特定突发 RAG 切片）"
 
         prompt = (
             "你是一个资深硬件与互联网产品总监（CPO/VP of Product）。\n"
-            "请基于以下社群真实反馈数据，为公司高管团队撰写一段深入、精炼、具备战略前瞻性的【VoC 业务管理层综述】（字数 250~350 字，结构化 2 段）：\n"
+            "请基于以下社群真实反馈数据以及 RAG 知识库检索出的典型原声事实，为公司高管团队撰写一段深入、精炼、具备战略前瞻性的【VoC 业务管理层综述】（字数 250~350 字，结构化 2 段）：\n"
             f"【核心模块分布与变动】:\n{cat_lines}\n\n"
             f"【关键严重缺陷与痛点】:\n{ins_lines}\n\n"
+            f"【RAG 检索知识库典型原声与上下文切片】:\n{rag_lines}\n\n"
             "要求：客观中立、透视问题本质、直击体验与商业风险，指出明确的研发攻坚与产品运营协同策略。"
         )
         try:
@@ -1016,8 +1089,25 @@ class ReportGenerator:
                 f"- **【证据核验链接】**: `{ins.drilldown_uri}`\n",
             ])
 
+        if hv.rag_evidence_highlights:
+            md.extend([
+                "## 🔍 5. RAG 知识库语义透视与社群原声溯源 (RAG Grounded Tracing)",
+                "| 重点模块 | 检索召回典型切片 / 关联事件 | 语义匹配度 | 溯源依据 |",
+                "|---|---|---|---|",
+            ])
+            for h in hv.rag_evidence_highlights[:6]:
+                snip_clean = h['snippet'].replace("\n", " ").replace("|", "/")[:60]
+                md.append(f"| **{h['category']}** | {h['title']} - {snip_clean}... | `{h['score']}` | `{h['evidence_uri'] or 'chatinsight://rag'}` |")
+            md.extend([
+                "",
+                "## 💡 6. 管理层战略综述与行动建议 (Executive Strategy)",
+            ])
+        else:
+            md.extend([
+                "## 💡 5. 管理层战略综述与行动建议 (Executive Strategy)",
+            ])
+
         md.extend([
-            "## 💡 5. 管理层战略综述与行动建议 (Executive Strategy)",
             f"{hv.ai_executive_summary}\n",
             "### 落地行动清单:",
         ])

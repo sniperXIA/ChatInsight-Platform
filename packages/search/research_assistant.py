@@ -340,12 +340,14 @@ class ResearchAssistant:
             "major": "⚠️ 严重故障",
             "minor": "📌 一般缺陷",
             "trivial": "🌱 轻微建议",
+            "chunk": "📌 真实原声",
         }
         type_zh = {
             "product_issue": "🐛 产品缺陷",
             "feature_request": "💡 功能需求",
             "usability_opportunity": "🎯 体验与易用性优化",
             "documentation_gap": "📖 说明与文档缺失",
+            "chunk": "💬 社群原声切片",
         }
 
         quotes_by_citation_id: dict[int, list[str]] = {}
@@ -393,6 +395,16 @@ class ResearchAssistant:
                 s_name, m_text = raw_msg_map[item.entity_id]
                 quote_str = f"“{m_text}”" if not m_text.startswith("“") else m_text
                 verbatim_quotes.append(quote_str)
+            elif item.entity_type == "chunk":
+                full_desc = item.metadata.get("full_context") or item.snippet
+                for line in full_desc.splitlines():
+                    if ":" in line or "：" in line:
+                        content_part = line.split(":", 1)[-1] if ":" in line else line.split("：", 1)[-1]
+                        clean_quote = content_part.strip()
+                        if len(clean_quote) >= 4 and f"“{clean_quote}”" not in verbatim_quotes:
+                            verbatim_quotes.append(f"“{clean_quote}”")
+                if not verbatim_quotes:
+                    verbatim_quotes.append(f"“{item.snippet}”")
 
             # Fallback if no raw message found: extract from 5w1h symptom
             if not verbatim_quotes and e_dict.get("symptom"):

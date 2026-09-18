@@ -1,12 +1,16 @@
+import logging
 import re
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+logger = logging.getLogger(__name__)
+
 from packages.insights.tag_manager import BUILTIN_TAGS
 from packages.model_gateway.gateway import ModelGateway
+from packages.model_gateway.mock_adapter import MockModelAdapter
 from packages.model_gateway.settings_manager import SettingsManager
 from packages.persistence.models import (
     Conversation,
@@ -258,51 +262,99 @@ class HybridSearchEngine:
                     )
                 )
 
-        # RRF Dense Vector Re-ranking
+        # --- Dual-Channel Recall & RRF Fusion ---
+        sparse_items: list[SearchResultItem] = list(results)
+        dense_candidates: list[dict[str, Any]] = []
+
         settings = SettingsManager.get_settings()
         embedding_cfg = getattr(settings, "embedding", None)
         vector_enabled = embedding_cfg.enabled if embedding_cfg else True
 
-        if vector_enabled and results and self.vector_service:
+        provider = self.vector_service.gateway.get_embedding_provider() if self.vector_service else None
+        is_mock = isinstance(provider, MockModelAdapter) or (not provider)
+
+        if vector_enabled and self.vector_service:
             try:
-                query_vec = await self.vector_service.embed_single(clean_q)
-                dense_ranked: list[tuple[SearchResultItem, float]] = []
+                # Channel 2: Direct dense vector retrieval from RAG knowledge store
+                min_dense_score = 0.18 if is_mock else 0.50
+                dense_candidates = await self.vector_service.search_dense_candidates(
+                    query=clean_q,
+                    limit=max(limit * 2, 20),
+                    entity_types=("topic", "insight", "chunk"),
+                    min_score=min_dense_score,
+                )
+            except Exception as exc:
+                logger.warning(f"Dense vector retrieval encountered error: {exc}")
 
-                for item in results:
-                    dense_sim = 0.0
-                    if item.entity_type == "topic":
-                        topic_obj = next((t for t in topics if t.id == item.entity_id), None)
-                        if topic_obj:
-                            t_vec = await self.vector_service.get_or_create_topic_vector(topic_obj)
-                            dense_sim = cosine_similarity(query_vec, t_vec)
-                    elif item.entity_type == "insight":
-                        ins_obj = next((ins for ins in insights if ins.id == item.entity_id), None)
-                        if ins_obj:
-                            ins_vec = await self.vector_service.get_insight_vector(ins_obj)
-                            dense_sim = cosine_similarity(query_vec, ins_vec)
-                    elif item.entity_type == "message":
-                        msg_vec = await self.vector_service.embed_single(item.snippet)
-                        dense_sim = cosine_similarity(query_vec, msg_vec)
+        # Map dense candidates to SearchResultItem and apply filter criteria if specified
+        dense_items: list[SearchResultItem] = []
+        for dc in dense_candidates:
+            e_type = dc["entity_type"]
+            meta = dc.get("metadata", {})
+            mod = meta.get("module")
+            sev = meta.get("severity")
+            stat = meta.get("status")
 
-                    if dense_sim > 0:
-                        dense_ranked.append((item, dense_sim))
+            # Apply filters if applicable
+            if filters.modules and mod and mod not in filters.modules:
+                continue
+            if filters.severities and sev and sev not in filters.severities:
+                continue
+            if filters.statuses and stat and stat not in filters.statuses:
+                continue
 
-                if dense_ranked:
-                    dense_ranked.sort(key=lambda x: x[1], reverse=True)
-                    sparse_ranked = [(item, item.score) for item in results]
-                    fused = reciprocal_rank_fusion(
-                        sparse_items=sparse_ranked,
-                        dense_items=dense_ranked,
-                        k=60,
-                        weight_sparse=1.0,
-                        weight_dense=1.2,
-                    )
-                    results = []
-                    for itm, fscore in fused:
-                        itm.score = round(fscore * 60.0, 3)
-                        results.append(itm)
-            except Exception:
-                pass
+            # Taxonomy module filtering & boosting for dense candidates
+            dc_meta_str = f"{mod or ''} {dc.get('title', '')} {dc.get('snippet', '')}"
+            mod_matched = self._is_module_matched(dc_meta_str, detected_modules) if detected_modules else False
+            if is_pure_category:
+                if not mod_matched:
+                    # Drop candidates that do not match pure category exploration
+                    continue
+            elif detected_modules and not mod_matched:
+                dc_score = max(0.0, dc["score"] - 0.15)
+                if dc_score < (0.18 if is_mock else 0.50):
+                    continue
+                dc["score"] = dc_score
+
+            dense_items.append(
+                SearchResultItem(
+                    entity_type=e_type,
+                    entity_id=dc["entity_id"],
+                    title=dc["title"],
+                    snippet=dc["snippet"],
+                    score=dc["score"],
+                    evidence_uri=dc["evidence_uri"],
+                    metadata=meta,
+                )
+            )
+
+        # Merge via Reciprocal Rank Fusion (RRF) if both channels have items
+        if sparse_items and dense_items:
+            sparse_ranked = [(it, it.score) for it in sparse_items]
+            dense_ranked = [(it, it.score) for it in dense_items]
+            fused = reciprocal_rank_fusion(
+                sparse_items=sparse_ranked,
+                dense_items=dense_ranked,
+                k=60,
+                weight_sparse=1.0,
+                weight_dense=1.3,
+            )
+            seen_keys: set[tuple[str, str]] = set()
+            results = []
+            for itm, fscore in fused:
+                k = (itm.entity_type, itm.entity_id)
+                if k not in seen_keys:
+                    seen_keys.add(k)
+                    itm.score = round(fscore * 60.0, 3)
+                    results.append(itm)
+        elif dense_items:
+            # Zero-sparse recall salvage! Dense RAG vector channel rescues colloquial/synonym query
+            # Only salvage if dense channel has genuinely high semantic confidence (not baseline Chinese sentence noise)
+            dense_salvage_threshold = 0.20 if is_mock else 0.65
+            salvaged = [it for it in dense_items if it.score >= dense_salvage_threshold]
+            results = salvaged
+        else:
+            results = sparse_items
 
         # Sort descending by relevance score
         results.sort(key=lambda x: x.score, reverse=True)
