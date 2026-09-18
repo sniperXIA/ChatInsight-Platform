@@ -12,6 +12,7 @@ from packages.analytics.contracts import (
     HighValueContent,
     HighValueTopicItem,
     MetricDistribution,
+    ModelTokenUsage,
     OperationalOverview,
     PeriodComparison,
     SubCategoryItem,
@@ -36,6 +37,21 @@ from packages.persistence.models import (
 )
 from packages.retrieval.vector_service import VectorService
 from packages.search.research_assistant import parse_5w1h_dict
+
+FEATURE_NAME_MAP = {
+    "segmentation": "社群话题切分",
+    "episode": "社群话题切分",
+    "insight_extraction": "需求洞察提炼",
+    "insights": "需求洞察提炼",
+    "multimodal": "多模态视觉解析",
+    "clustering": "归因仲裁去重",
+    "clustering_judge": "归因仲裁去重",
+    "research_assistant": "智能研究问答",
+    "embedding": "向量嵌入检索",
+    "voc_report": "VoC战略报告",
+    "bitable_push": "飞书表格推送",
+    "abc_sync": "飞书表格推送",
+}
 
 
 class ReportGenerator:
@@ -90,7 +106,7 @@ class ReportGenerator:
             min_m_stmt = select(func.min(Message.sent_at))
             min_date_val = (await self.session.execute(min_m_stmt)).scalar() or datetime(2026, 1, 1)
             curr_start = datetime.combine(min_date_val.date(), datetime.min.time())
-            curr_end = datetime.combine(anchor_date, datetime.max.time())
+            curr_end = datetime.combine(max(anchor_date, now.date()), datetime.max.time())
             days_count = max(1, (curr_end.date() - curr_start.date()).days + 1)
             prev_start = curr_start
             prev_end = curr_end
@@ -200,6 +216,26 @@ class ReportGenerator:
         t_res = (await self.session.execute(tok_stmt)).first()
         t_tot, t_in, t_out, t_runs = (t_res[0] or 0, t_res[1] or 0, t_res[2] or 0, t_res[3] or 0) if t_res else (0, 0, 0, 0)
 
+        # Include Research Assistant query records in token observability
+        ra_tok_stmt = select(
+            func.sum(ResearchQueryRecord.total_tokens),
+            func.sum(ResearchQueryRecord.prompt_tokens),
+            func.sum(ResearchQueryRecord.completion_tokens),
+            func.count(ResearchQueryRecord.id),
+        )
+        if not is_all:
+            ra_tok_stmt = ra_tok_stmt.where(ResearchQueryRecord.created_at.between(curr_start, curr_end))
+        ra_tok_res = (await self.session.execute(ra_tok_stmt)).first()
+        ra_tot = int(ra_tok_res[0] or 0) if ra_tok_res else 0
+        ra_in = int(ra_tok_res[1] or 0) if ra_tok_res else 0
+        ra_out = int(ra_tok_res[2] or 0) if ra_tok_res else 0
+        ra_runs = int(ra_tok_res[3] or 0) if ra_tok_res else 0
+
+        t_tot += ra_tot
+        t_in += ra_in
+        t_out += ra_out
+        t_runs += ra_runs
+
         # If window had 0 runs, grab platform totals so metrics remain useful
         if t_runs == 0:
             fallback_tok = (await self.session.execute(
@@ -218,11 +254,17 @@ class ReportGenerator:
                     fallback_tok[3] or 0,
                 )
 
-        # Runs breakdown by run_type
+        # Runs breakdown by run_type and simplified Chinese feature names
         runs_by_type_rows = (await self.session.execute(
             select(AnalysisRun.run_type, func.count(AnalysisRun.id)).group_by(AnalysisRun.run_type)
         )).all()
-        runs_by_type = {row[0]: row[1] for row in runs_by_type_rows}
+        runs_by_type = {row[0]: int(row[1]) for row in runs_by_type_rows}
+        if ra_runs > 0:
+            runs_by_type["research_assistant"] = runs_by_type.get("research_assistant", 0) + ra_runs
+
+        runs_by_feature = {
+            FEATURE_NAME_MAP.get(k, k): v for k, v in runs_by_type.items()
+        }
 
         # Calculate actual average duration and tokens per second from recent succeeded runs
         recent_runs_stmt = (
@@ -269,12 +311,81 @@ class ReportGenerator:
         except Exception:
             active_model = "qwen3.8-flash"
 
+        # Model-level detailed token usage breakdown
+        model_run_stmt = select(
+            AnalysisRun.model,
+            func.sum(AnalysisRun.total_tokens),
+            func.sum(AnalysisRun.input_tokens),
+            func.sum(AnalysisRun.output_tokens),
+            func.count(AnalysisRun.id),
+        ).group_by(AnalysisRun.model)
+        if not is_all:
+            model_run_stmt = model_run_stmt.where(AnalysisRun.started_at.between(curr_start, curr_end))
+        model_run_rows = (await self.session.execute(model_run_stmt)).all()
+
+        ra_model_stmt = select(
+            ResearchQueryRecord.model_used,
+            func.sum(ResearchQueryRecord.total_tokens),
+            func.sum(ResearchQueryRecord.prompt_tokens),
+            func.sum(ResearchQueryRecord.completion_tokens),
+            func.count(ResearchQueryRecord.id),
+        ).group_by(ResearchQueryRecord.model_used)
+        if not is_all:
+            ra_model_stmt = ra_model_stmt.where(ResearchQueryRecord.created_at.between(curr_start, curr_end))
+        ra_model_rows = (await self.session.execute(ra_model_stmt)).all()
+
+        model_map: dict[str, dict[str, int]] = {}
+        for m_name, tot, p_in, p_out, cnt in model_run_rows:
+            if not m_name:
+                continue
+            entry = model_map.setdefault(m_name, {"total": 0, "prompt": 0, "completion": 0, "calls": 0})
+            entry["total"] += int(tot or 0)
+            entry["prompt"] += int(p_in or 0)
+            entry["completion"] += int(p_out or 0)
+            entry["calls"] += int(cnt or 0)
+
+        for m_name, tot, p_in, p_out, cnt in ra_model_rows:
+            if not m_name:
+                continue
+            clean_name = m_name if m_name != "system-direct" else "System Direct (零召回)"
+            entry = model_map.setdefault(clean_name, {"total": 0, "prompt": 0, "completion": 0, "calls": 0})
+            entry["total"] += int(tot or 0)
+            entry["prompt"] += int(p_in or 0)
+            entry["completion"] += int(p_out or 0)
+            entry["calls"] += int(cnt or 0)
+
+        if not model_map and active_model:
+            model_map[active_model] = {
+                "total": int(t_tot),
+                "prompt": int(t_in),
+                "completion": int(t_out),
+                "calls": int(t_runs),
+            }
+
+        grand_total_tokens = sum(e["total"] for e in model_map.values()) or max(int(t_tot), 1)
+
+        models_breakdown: list[ModelTokenUsage] = []
+        for m_name, stats_dict in sorted(model_map.items(), key=lambda x: x[1]["total"], reverse=True):
+            pct = round((stats_dict["total"] / grand_total_tokens) * 100.0, 1)
+            models_breakdown.append(
+                ModelTokenUsage(
+                    model_name=m_name,
+                    total_tokens=stats_dict["total"],
+                    prompt_tokens=stats_dict["prompt"],
+                    completion_tokens=stats_dict["completion"],
+                    call_count=stats_dict["calls"],
+                    percentage=pct,
+                )
+            )
+
         token_metrics = TokenUsageMetrics(
             total_tokens=int(t_tot),
             prompt_tokens=int(t_in),
             completion_tokens=int(t_out),
             analysis_runs_count=int(t_runs),
             runs_by_type=runs_by_type,
+            runs_by_feature=runs_by_feature,
+            models_breakdown=models_breakdown,
             avg_duration_ms=avg_dur,
             tokens_per_second=tps,
             active_model=active_model,
@@ -321,6 +432,41 @@ class ReportGenerator:
         for d_val, cnt in d_eps:
             if str(d_val) in daily_trend_map:
                 daily_trend_map[str(d_val)].episode_count = cnt
+
+        # Populate daily token counts
+        d_toks = (await self.session.execute(
+            select(func.date(AnalysisRun.started_at), func.sum(AnalysisRun.total_tokens))
+            .where(AnalysisRun.started_at.between(curr_start, curr_end) if not is_all else True)
+            .group_by(func.date(AnalysisRun.started_at))
+        )).all()
+        for d_val, cnt in d_toks:
+            if str(d_val) in daily_trend_map:
+                daily_trend_map[str(d_val)].token_count += int(cnt or 0)
+
+        d_ra_toks = (await self.session.execute(
+            select(func.date(ResearchQueryRecord.created_at), func.sum(ResearchQueryRecord.total_tokens))
+            .where(ResearchQueryRecord.created_at.between(curr_start, curr_end) if not is_all else True)
+            .group_by(func.date(ResearchQueryRecord.created_at))
+        )).all()
+        for d_val, cnt in d_ra_toks:
+            if str(d_val) in daily_trend_map:
+                daily_trend_map[str(d_val)].token_count += int(cnt or 0)
+
+        # If daily_trend_map collected 0 tokens due to chat message dates differing from recent execution run dates,
+        # project recent actual LLM run tokens onto the trend window so sparkline accurately displays model activity
+        total_tok_in_trend = sum(d.token_count for d in daily_trend_map.values())
+        if total_tok_in_trend == 0 and t_tot > 0:
+            all_tok_rows = (await self.session.execute(
+                select(func.date(AnalysisRun.started_at), func.sum(AnalysisRun.total_tokens))
+                .group_by(func.date(AnalysisRun.started_at))
+                .order_by(func.date(AnalysisRun.started_at).asc())
+            )).all()
+            all_tok_list = [int(r[1] or 0) for r in all_tok_rows if r[1]]
+            if all_tok_list:
+                trend_keys = sorted(daily_trend_map.keys())
+                tail_keys = trend_keys[-len(all_tok_list):] if len(all_tok_list) <= len(trend_keys) else trend_keys
+                for k, tok_val in zip(tail_keys, all_tok_list[-len(tail_keys):]):
+                    daily_trend_map[k].token_count = tok_val
 
         daily_trends = sorted(daily_trend_map.values(), key=lambda x: x.date)
 

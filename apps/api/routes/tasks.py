@@ -90,7 +90,7 @@ async def launch_task(payload: LaunchTaskRequest):
                 return
             await tm.update_progress(
                 task_id=state.task_id,
-                progress_pct=30,
+                progress_pct=25,
                 current_step_name="2. 多模态视觉解析",
                 current_item_label="正在提取群聊图片 OCR 文本与界面报错...",
                 steps=steps,
@@ -102,7 +102,7 @@ async def launch_task(payload: LaunchTaskRequest):
             )
             steps.append(step2.model_dump())
             summary["enriched_media"] = step2.success_count
-            await tm.update_progress(task_id=state.task_id, progress_pct=45, steps=steps, summary=summary)
+            await tm.update_progress(task_id=state.task_id, progress_pct=50, steps=steps, summary=summary)
 
             # Stage 3: Episode Segmentation (Scoped)
             if state.cancel_requested:
@@ -111,10 +111,10 @@ async def launch_task(payload: LaunchTaskRequest):
             async def _on_pipeline_segmentation_progress(processed: int, total: int, label: str, log_item: Any):
                 if state.cancel_requested:
                     return
-                pct = 50 + int(14 * (processed / max(total, 1)))
+                pct = 50 + int(24 * (processed / max(total, 1)))
                 await tm.update_progress(
                     task_id=state.task_id,
-                    progress_pct=min(pct, 64),
+                    progress_pct=min(pct, 74),
                     current_step_name="3. 对话与事实切分",
                     current_item_label=label,
                     steps=steps,
@@ -138,7 +138,7 @@ async def launch_task(payload: LaunchTaskRequest):
             )
             steps.append(step3.model_dump())
             summary["total_episodes"] = step3.success_count
-            await tm.update_progress(task_id=state.task_id, progress_pct=65, steps=steps, summary=summary)
+            await tm.update_progress(task_id=state.task_id, progress_pct=75, steps=steps, summary=summary)
 
             # Stage 4: Insight Extraction (Scoped)
             if state.cancel_requested:
@@ -147,10 +147,10 @@ async def launch_task(payload: LaunchTaskRequest):
             async def _on_pipeline_insight_progress(processed: int, total: int, label: str, log_item: Any):
                 if state.cancel_requested:
                     return
-                pct = 70 + int(14 * (processed / max(total, 1)))
+                pct = 75 + int(19 * (processed / max(total, 1)))
                 await tm.update_progress(
                     task_id=state.task_id,
-                    progress_pct=min(pct, 84),
+                    progress_pct=min(pct, 94),
                     current_step_name="4. 洞察提炼与事实核验",
                     current_item_label=label,
                     steps=steps,
@@ -158,7 +158,7 @@ async def launch_task(payload: LaunchTaskRequest):
 
             await tm.update_progress(
                 task_id=state.task_id,
-                progress_pct=70,
+                progress_pct=75,
                 current_step_name="4. 洞察提炼与事实核验",
                 current_item_label=f"正在提炼原子主张与结构化洞察 [{scope_label}]...",
                 steps=steps,
@@ -175,41 +175,18 @@ async def launch_task(payload: LaunchTaskRequest):
             )
             steps.append(step4.model_dump())
             summary["extracted_insights"] = step4.success_count
-            await tm.update_progress(task_id=state.task_id, progress_pct=85, steps=steps, summary=summary)
-
-            # Stage 5: Topic Clustering
-            if state.cancel_requested:
-                return
-            await tm.update_progress(
-                task_id=state.task_id,
-                progress_pct=88,
-                current_step_name="5. 聚类去重与主题沉淀",
-                current_item_label="正在执行两阶段归因聚类与主题聚合...",
-                steps=steps,
-            )
-            step5 = await _run_topic_clustering(
-                session=session,
-                force_mock=payload.force_mock,
-            )
-            steps.append(step5.model_dump())
-            summary["clustered_insights"] = step5.success_count
             await tm.update_progress(task_id=state.task_id, progress_pct=95, steps=steps, summary=summary)
 
-            # Stage 6: ABC Sync
+            # Final Report Generation
             if state.cancel_requested:
                 return
             await tm.update_progress(
                 task_id=state.task_id,
                 progress_pct=96,
-                current_step_name="6. ABC 平台同步",
-                current_item_label="正在同步最新主题至 ABC User Feedback 知识库...",
+                current_step_name="实时 VoC 业务报表更新",
+                current_item_label="正在聚合最新洞察并生成全景业务报表...",
                 steps=steps,
             )
-            step6 = await _run_abc_sync(session=session)
-            steps.append(step6.model_dump())
-            summary["synced_abc_topics"] = step6.success_count
-
-            # Final Report Generation
             report_gen = ReportGenerator(session)
             report = await report_gen.generate_report(period_label=f"全链路自动化流水线实时报告 ({scope_label})", force_mock=True)
             summary["total_feedbacks"] = report.total_feedbacks

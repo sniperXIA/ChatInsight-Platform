@@ -27,12 +27,23 @@ class DailyTrendPoint(BaseModel):
     token_count: int = 0
 
 
+class ModelTokenUsage(BaseModel):
+    model_name: str
+    total_tokens: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    call_count: int = 0
+    percentage: float = 0.0
+
+
 class TokenUsageMetrics(BaseModel):
     total_tokens: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     analysis_runs_count: int = 0
     runs_by_type: dict[str, int] = Field(default_factory=dict)
+    runs_by_feature: dict[str, int] = Field(default_factory=dict, description="简体中文业务功能调用次数统计")
+    models_breakdown: list[ModelTokenUsage] = Field(default_factory=list, description="按大模型名称细分统计的消耗数据")
     avg_duration_ms: float = 0.0
     tokens_per_second: float = 0.0
     active_model: str = ""

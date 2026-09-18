@@ -240,7 +240,7 @@
                   type="button"
                 >
                   <i :class="pipelineLoading ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-play'"></i>
-                  <span>{{ pipelineLoading ? '全链路处理中，请稍候...' : '🚀 开始执行全链路自动化流水线 (1 ~ 6 步)' }}</span>
+                  <span>{{ pipelineLoading ? '全链路处理中，请稍候...' : '🚀 开始执行全链路自动化流水线 (1 ~ 4 步)' }}</span>
                 </button>
               </div>
             </div>
@@ -248,7 +248,7 @@
             <!-- Single Step Execution Cards Grid (When in single-step mode) -->
             <div v-if="pipelineTabMode === 'single'" class="space-y-3">
               <h5 class="text-xs font-bold text-slate-700 uppercase tracking-wider">分步独立执行 (按需单步调试与验证)</h5>
-              <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div v-for="stepItem in singleStepCatalog" :key="stepItem.id" class="p-3.5 bg-white border border-slate-200 rounded-xl shadow-sm space-y-2 flex flex-col justify-between">
                   <div>
                     <div class="flex items-center gap-2 font-bold text-xs text-slate-800">
@@ -2996,6 +2996,10 @@
                       <span class="text-slate-400">提炼洞察:</span>
                       <span class="text-indigo-300 font-semibold">{{ mouseTooltip.insight_count }} 条</span>
                     </div>
+                    <div v-if="mouseTooltip.token_count !== undefined && mouseTooltip.token_count > 0" class="flex items-center justify-between gap-4">
+                      <span class="text-slate-400">Token 消耗:</span>
+                      <span class="text-amber-300 font-semibold">{{ (mouseTooltip.token_count || 0).toLocaleString() }} tok</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3010,49 +3014,131 @@
               </div>
             </div>
 
-            <!-- Right 1 Col: LLM Token & Resource Observability -->
-            <div class="bg-gradient-to-b from-slate-900 to-indigo-950 text-white rounded-xl shadow-lg p-6 flex flex-col justify-between space-y-4 min-w-0">
-              <div class="space-y-3">
-                <div class="flex items-center justify-between border-b border-white/10 pb-3">
+            <!-- Right 1 Col: LLM Token & Resource Observability (Enhanced) -->
+            <div class="bg-gradient-to-b from-slate-900 to-indigo-950 text-white rounded-xl shadow-lg p-5 flex flex-col justify-between space-y-4 min-w-0">
+              <div class="space-y-3.5">
+                <!-- Header -->
+                <div class="flex items-center justify-between border-b border-white/10 pb-2.5">
                   <span class="text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
-                    <i class="fa-solid fa-microchip"></i> 算力与模型服务健康大盘
+                    <i class="fa-solid fa-microchip"></i> 算力与模型服务大盘
                   </span>
-                  <div class="flex items-center gap-1.5">
+                  <div class="flex items-center gap-2">
                     <span class="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-400/30 flex items-center gap-1.5">
                       <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                      <span>实时监测中</span>
+                      <span>实时监测</span>
                     </span>
+                    <button @click="loadStats(null)" class="text-[10px] text-indigo-300 hover:text-white transition cursor-pointer flex items-center gap-1" title="刷新指标">
+                      <i class="fa-solid fa-arrows-rotate text-[9px]"></i>
+                    </button>
                   </div>
                 </div>
 
+                <!-- Cumulative Total Tokens -->
                 <div>
                   <div class="flex items-center justify-between">
                     <p class="text-xs text-slate-400">大模型累积总消耗</p>
-                    <span v-if="stats.token_usage?.active_model" class="text-[10px] font-mono text-indigo-200 bg-white/10 px-2 py-0.5 rounded truncate max-w-[140px]" :title="stats.token_usage.active_model">
-                      {{ stats.token_usage.active_model }}
+                    <span v-if="stats.token_usage?.active_model" class="text-[10px] font-mono text-indigo-200 bg-white/10 px-2 py-0.5 rounded truncate max-w-[150px]" :title="'当前默认模型: ' + stats.token_usage.active_model">
+                      ⚡ {{ stats.token_usage.active_model }}
                     </span>
                   </div>
-                  <p class="text-3xl font-extrabold text-white tracking-tight mt-0.5">
-                    {{ (stats.token_usage?.total_tokens || 0).toLocaleString() }}
-                    <span class="text-xs font-normal text-indigo-300 ml-1">Tokens</span>
-                  </p>
-                </div>
-
-                <div class="grid grid-cols-2 gap-2 pt-1">
-                  <div class="bg-white/5 p-2.5 rounded-lg border border-white/10">
-                    <p class="text-[11px] text-slate-400">输入 Prompt</p>
-                    <p class="text-sm font-bold text-slate-100">{{ (stats.token_usage?.prompt_tokens || 0).toLocaleString() }}</p>
-                  </div>
-                  <div class="bg-white/5 p-2.5 rounded-lg border border-white/10">
-                    <p class="text-[11px] text-slate-400">生成 Output</p>
-                    <p class="text-sm font-bold text-slate-100">{{ (stats.token_usage?.completion_tokens || 0).toLocaleString() }}</p>
+                  <div class="flex items-baseline justify-between mt-1">
+                    <p class="text-3xl font-extrabold text-white tracking-tight">
+                      {{ (stats.token_usage?.total_tokens || 0).toLocaleString() }}
+                      <span class="text-xs font-normal text-indigo-300 ml-1">Tokens</span>
+                    </p>
+                    <div class="text-[11px] font-mono text-slate-300 flex items-center gap-2.5">
+                      <span title="输入 Prompt Token">入: <b class="text-white">{{ (stats.token_usage?.prompt_tokens || 0).toLocaleString() }}</b></span>
+                      <span class="text-slate-600">|</span>
+                      <span title="生成 Output Token">出: <b class="text-white">{{ (stats.token_usage?.completion_tokens || 0).toLocaleString() }}</b></span>
+                    </div>
                   </div>
                 </div>
 
-                <!-- Critical Real-Time Health KPIs: Request Count, Speed, Latency -->
-                <div class="grid grid-cols-2 gap-2 pt-1">
+                <!-- Sparkline Trend Chart (分时间趋势小折线图) -->
+                <div class="bg-white/5 border border-white/10 rounded-xl p-3 space-y-1.5">
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-slate-300 font-medium flex items-center gap-1">
+                      <i class="fa-solid fa-chart-line text-indigo-400 text-[10px]"></i> Token 消耗分时走势
+                    </span>
+                    <span class="text-[10px] text-slate-400 font-mono" v-if="tokenTrendSparkline.hasData">
+                      峰值 {{ (tokenTrendSparkline.max || 0).toLocaleString() }} · 日均 {{ Math.round((tokenTrendSparkline.total || 0) / (stats.daily_trends?.length || 1)).toLocaleString() }} tok
+                    </span>
+                  </div>
+
+                  <!-- SVG Sparkline -->
+                  <div class="w-full h-11 relative flex items-end">
+                    <svg v-if="tokenTrendSparkline.hasData" viewBox="0 0 240 48" preserveAspectRatio="none" class="w-full h-full overflow-visible">
+                      <defs>
+                        <linearGradient id="tokenSparklineGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                          <stop offset="0%" stop-color="#818cf8" stop-opacity="0.4" />
+                          <stop offset="100%" stop-color="#818cf8" stop-opacity="0.0" />
+                        </linearGradient>
+                      </defs>
+                      <path :d="tokenTrendSparkline.areaD" fill="url(#tokenSparklineGrad)" />
+                      <path :d="tokenTrendSparkline.pathD" fill="none" stroke="#a5b4fc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                      <circle 
+                        v-for="(pt, idx) in tokenTrendSparkline.coords" 
+                        :key="idx" 
+                        :cx="pt.x" 
+                        :cy="pt.y" 
+                        r="2.5" 
+                        class="fill-indigo-300 hover:fill-amber-300 transition-all cursor-pointer"
+                      >
+                        <title>{{ pt.date }}: {{ (pt.val || 0).toLocaleString() }} Tokens</title>
+                      </circle>
+                    </svg>
+                    <div v-else class="w-full h-full flex items-center justify-center text-[10px] text-slate-500 font-mono">
+                      当前周期内暂无分时消耗数据
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-between text-[9px] text-slate-400 font-mono pt-0.5">
+                    <span>{{ stats.daily_trends?.[0]?.date?.slice(5) || '-' }}</span>
+                    <span>{{ stats.daily_trends?.[stats.daily_trends.length - 1]?.date?.slice(5) || '-' }}</span>
+                  </div>
+                </div>
+
+                <!-- Per-Model Token Breakdown (区分具体模型名称) -->
+                <div class="space-y-1.5">
+                  <div class="flex items-center justify-between text-[11px] text-slate-300 font-medium">
+                    <span class="flex items-center gap-1">
+                      <i class="fa-solid fa-layer-group text-purple-400 text-[10px]"></i> 具体模型消耗细分
+                    </span>
+                    <span class="text-[10px] text-slate-400">已调度 {{ (stats.token_usage?.models_breakdown || []).length }} 种模型</span>
+                  </div>
+
+                  <div class="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+                    <div 
+                      v-for="modelItem in (stats.token_usage?.models_breakdown || [])" 
+                      :key="modelItem.model_name" 
+                      class="bg-white/5 hover:bg-white/10 transition rounded-lg p-2 border border-white/10 text-xs space-y-1"
+                    >
+                      <div class="flex items-center justify-between">
+                        <span class="font-mono text-[11px] font-bold text-indigo-200 truncate max-w-[160px]" :title="modelItem.model_name">
+                          {{ modelItem.model_name }}
+                        </span>
+                        <div class="flex items-center gap-1.5 font-mono text-[11px]">
+                          <span class="font-bold text-white">{{ (modelItem.total_tokens || 0).toLocaleString() }}</span>
+                          <span class="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/30 text-indigo-200 font-medium">{{ modelItem.percentage }}%</span>
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <div class="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                          <div class="h-full bg-gradient-to-r from-indigo-400 to-purple-400 rounded-full" :style="{ width: Math.min(100, Math.max(modelItem.percentage || 0, 4)) + '%' }"></div>
+                        </div>
+                        <span class="text-[9px] text-slate-400 font-mono whitespace-nowrap">{{ modelItem.call_count || 0 }} 次调用</span>
+                      </div>
+                    </div>
+
+                    <div v-if="!stats.token_usage?.models_breakdown || stats.token_usage.models_breakdown.length === 0" class="text-slate-500 text-[10px] py-1 text-center">
+                      暂无多模型消耗明细
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Health KPIs: Request Count, Speed, Latency -->
+                <div class="grid grid-cols-2 gap-2 pt-0.5">
                   <div class="bg-indigo-900/30 p-2.5 rounded-lg border border-indigo-500/30">
-                    <p class="text-[10px] text-indigo-300 font-medium">模型请求次数</p>
+                    <p class="text-[10px] text-indigo-300 font-medium">模型请求总次数</p>
                     <p class="text-base font-bold text-white mt-0.5 font-mono">
                       {{ stats.token_usage?.analysis_runs_count || 0 }} <span class="text-[10px] font-normal text-indigo-300">次</span>
                     </p>
@@ -3069,20 +3155,23 @@
                 </div>
               </div>
 
-              <!-- Task Runs Breakdown Badges & Auto-refresh status -->
-              <div class="pt-3 border-t border-white/10 space-y-2">
+              <!-- Bottom: Chinese Feature Calls Breakdown (简体中文功能名称) -->
+              <div class="pt-2.5 border-t border-white/10 space-y-1.5">
                 <div class="flex items-center justify-between text-[11px] text-slate-400">
-                  <span>各阶段模型调用分布:</span>
-                  <button @click="loadStats(null)" class="text-[10px] text-indigo-300 hover:text-white transition cursor-pointer flex items-center gap-1">
-                    <i class="fa-solid fa-arrows-rotate text-[9px]"></i>
-                    <span>立即刷新</span>
-                  </button>
+                  <span class="font-medium text-slate-300 flex items-center gap-1">
+                    <i class="fa-solid fa-list-check text-indigo-400 text-[10px]"></i> 功能调用明细 (精确中文业务分类):
+                  </span>
                 </div>
                 <div class="flex flex-wrap gap-1.5 text-[10px]">
-                  <span v-for="(cnt, rk) in (stats.token_usage?.runs_by_type || {})" :key="rk" class="bg-white/10 px-2 py-0.5 rounded text-indigo-200">
-                    {{ rk }}: {{ cnt }}次
+                  <span 
+                    v-for="(cnt, featName) in (stats.token_usage?.runs_by_feature && Object.keys(stats.token_usage.runs_by_feature).length > 0 ? stats.token_usage.runs_by_feature : (stats.token_usage?.runs_by_type || {}))" 
+                    :key="featName" 
+                    class="bg-white/10 border border-white/10 px-2 py-0.5 rounded text-indigo-200 flex items-center gap-1"
+                  >
+                    <span class="text-slate-300">{{ featName }}:</span>
+                    <b class="text-white font-mono">{{ cnt }} 次</b>
                   </span>
-                  <span v-if="!stats.token_usage?.runs_by_type || Object.keys(stats.token_usage.runs_by_type).length === 0" class="text-slate-500 text-[10px]">
+                  <span v-if="(!stats.token_usage?.runs_by_feature || Object.keys(stats.token_usage.runs_by_feature).length === 0) && (!stats.token_usage?.runs_by_type || Object.keys(stats.token_usage.runs_by_type).length === 0)" class="text-slate-500 text-[10px]">
                     暂无细分调用记录
                   </span>
                 </div>
@@ -3312,9 +3401,9 @@
                   </p>
                 </div>
 
-                <!-- 7 Stages Workflow Progress Visualizer -->
+                <!-- 4 Stages Workflow Progress Visualizer -->
                 <div v-if="task.task_type === 'full_pipeline'" class="pt-2">
-                  <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+                  <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                     <div 
                       v-for="(stage, sIndex) in pipelineStageList" 
                       :key="stage.id"
@@ -3497,10 +3586,10 @@
                   <div class="space-y-1.5 text-left">
                     <div class="flex items-center gap-2">
                       <span class="px-2 py-0.5 bg-indigo-500/40 text-indigo-200 text-[10px] font-bold rounded-md uppercase">全自动流程</span>
-                      <h4 class="font-bold text-sm text-white">⚡ 一键全链路自动化运行 (7 阶段全流程)</h4>
+                      <h4 class="font-bold text-sm text-white">⚡ 一键全链路自动化运行 (4 核心阶段全流程)</h4>
                     </div>
                     <p class="text-xs text-indigo-200">
-                      自动按序执行：1.全量导入 ➔ 2.多模态解析 ➔ 3.对话切分 ➔ 4.洞察提炼 ➔ 5.聚类去重 ➔ 6.ABC同步 ➔ 7.VoC报表
+                      自动按序执行：1.扫描全量导入 ➔ 2.多模态视觉解析 ➔ 3.对话切分 ➔ 4.洞察提炼与事实核验 ➔ 实时 VoC 报表更新
                     </p>
                   </div>
                   <button 
@@ -3521,7 +3610,7 @@
                     </h5>
                   </div>
 
-                  <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
+                  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
                     <div 
                       v-for="stepItem in singleStepCatalog" 
                       :key="stepItem.id" 
@@ -8232,7 +8321,8 @@
             date: d.date,
             message_count: d.message_count || 0,
             episode_count: d.episode_count || 0,
-            insight_count: d.insight_count !== undefined ? d.insight_count : undefined
+            insight_count: d.insight_count !== undefined ? d.insight_count : undefined,
+            token_count: d.token_count !== undefined ? d.token_count : undefined
           };
         };
 
@@ -8246,6 +8336,7 @@
           mouseTooltip.value.message_count = d.message_count || 0;
           mouseTooltip.value.episode_count = d.episode_count || 0;
           mouseTooltip.value.insight_count = d.insight_count !== undefined ? d.insight_count : undefined;
+          mouseTooltip.value.token_count = d.token_count !== undefined ? d.token_count : undefined;
         };
 
         const onBarMouseLeave = () => {
@@ -8304,6 +8395,52 @@
           if (total <= 35) return idx % 3 === 0 || idx === total - 1;
           return idx % 7 === 0 || idx === total - 1;
         };
+
+        const tokenTrendSparkline = computed(() => {
+          const trends = stats.value?.daily_trends || [];
+          if (!trends.length) {
+            return { points: '', pathD: '', areaD: '', coords: [], hasData: false, max: 0, min: 0, total: 0, latest: 0 };
+          }
+          const values = trends.map(t => t.token_count || 0);
+          const max = Math.max(...values, 0);
+          const min = Math.min(...values, 0);
+          const total = values.reduce((a, b) => a + b, 0);
+          const latest = values[values.length - 1] || 0;
+          if (max === 0) {
+            return { points: '', pathD: '', areaD: '', coords: [], hasData: false, max: 0, min: 0, total, latest: 0 };
+          }
+          const width = 240;
+          const height = 48;
+          const paddingX = 4;
+          const paddingTop = 6;
+          const paddingBottom = 4;
+          const usableWidth = width - paddingX * 2;
+          const usableHeight = height - paddingTop - paddingBottom;
+          const stepX = trends.length > 1 ? usableWidth / (trends.length - 1) : usableWidth;
+
+          const coords = trends.map((t, i) => {
+            const x = paddingX + (trends.length > 1 ? i * stepX : usableWidth / 2);
+            const val = t.token_count || 0;
+            const y = paddingTop + (usableHeight - (val / (max || 1)) * usableHeight);
+            return { x: Number(x.toFixed(1)), y: Number(y.toFixed(1)), val, date: t.date };
+          });
+
+          const pointsStr = coords.map(p => `${p.x},${p.y}`).join(' ');
+          const pathD = coords.reduce((acc, p, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`, '');
+          const areaD = `${pathD} L ${coords[coords.length - 1].x} ${height} L ${coords[0].x} ${height} Z`;
+
+          return {
+            points: pointsStr,
+            pathD,
+            areaD,
+            coords,
+            hasData: true,
+            max,
+            min,
+            total,
+            latest
+          };
+        });
 
         const conversations = ref([]);
         const convSearchQuery = ref('');
@@ -10005,13 +10142,10 @@
         };
 
         const pipelineStageList = [
-          { id: 'scan_import', name: '1. 扫描导入', icon: 'fa-solid fa-folder-open' },
-          { id: 'multimodal', name: '2. 多模态解析', icon: 'fa-solid fa-image' },
-          { id: 'segmentation', name: '3. 对话切分', icon: 'fa-solid fa-layer-group' },
-          { id: 'insights', name: '4. 洞察提炼', icon: 'fa-solid fa-lightbulb' },
-          { id: 'clustering', name: '5. 聚类去重', icon: 'fa-solid fa-scale-balanced' },
-          { id: 'abc_sync', name: '6. 飞书多维表格推送', icon: 'fa-solid fa-share-from-square' },
-          { id: 'voc_report', name: '7. VoC 报表', icon: 'fa-solid fa-file-lines' },
+          { id: 'scan_import', name: '1. 扫描与全量导入', icon: 'fa-solid fa-folder-open' },
+          { id: 'multimodal', name: '2. 多模态视觉解析', icon: 'fa-solid fa-image' },
+          { id: 'segmentation', name: '3. 对话与事实切分', icon: 'fa-solid fa-layer-group' },
+          { id: 'insight_extraction', name: '4. 洞察提炼与核验', icon: 'fa-solid fa-lightbulb' },
         ];
 
         const formatTaskDuration = (ms) => {
@@ -10058,7 +10192,8 @@
 
         const getStageStepCardClass = (task, stageIndex, stageId) => {
           const completedStepIds = (task.steps || []).map(s => s.step_id);
-          if (completedStepIds.includes(stageId)) {
+          const isDone = completedStepIds.includes(stageId) || (stageId === 'insight_extraction' && completedStepIds.includes('insights')) || (stageId === 'insights' && completedStepIds.includes('insight_extraction'));
+          if (isDone) {
             return 'bg-emerald-50 border-emerald-200 text-emerald-800 font-bold';
           }
           if (task.current_step_name && task.current_step_name.includes(String(stageIndex + 1))) {
@@ -10069,7 +10204,8 @@
 
         const getStageStepIcon = (task, stageIndex, stageId) => {
           const completedStepIds = (task.steps || []).map(s => s.step_id);
-          if (completedStepIds.includes(stageId)) {
+          const isDone = completedStepIds.includes(stageId) || (stageId === 'insight_extraction' && completedStepIds.includes('insights')) || (stageId === 'insights' && completedStepIds.includes('insight_extraction'));
+          if (isDone) {
             return 'fa-solid fa-circle-check text-emerald-600';
           }
           if (task.current_step_name && task.current_step_name.includes(String(stageIndex + 1))) {
@@ -11789,12 +11925,10 @@
         const singleStepLoading = ref({});
 
         const singleStepCatalog = [
-          { id: 'scan_import', name: '1. 扫描与增量导入', icon: 'fa-solid fa-folder-open', desc: '从指定的本地文件夹扫描聊天记录并增量导入消息与媒体资产' },
-          { id: 'multimodal', name: '2. 多模态媒体富化', icon: 'fa-solid fa-image', desc: '调用视觉模型解析图片与视频关键帧，提取 OCR 与视觉报错摘要' },
+          { id: 'scan_import', name: '1. 扫描与全量导入', icon: 'fa-solid fa-folder-open', desc: '从指定的本地目录全量扫描聊天记录并高效导入消息与媒体资产' },
+          { id: 'multimodal', name: '2. 多模态视觉解析', icon: 'fa-solid fa-image', desc: '调用视觉模型解析群聊图片与视频关键帧，提取 OCR 与报错摘要' },
           { id: 'segmentation', name: '3. 对话 Episode 话题切分', icon: 'fa-solid fa-layer-group', desc: '按时间窗口与上下文语义将离散消息聚合为结构化 Episode 话题' },
-          { id: 'insight_extraction', name: '4. 洞察提炼与事实核验', icon: 'fa-solid fa-lightbulb', desc: '调用大模型提取产品缺陷、需求建议并锚定真实 Claim 证据链' },
-          { id: 'clustering', name: '5. 两阶段聚类与主题沉淀', icon: 'fa-solid fa-scale-balanced', desc: '基于两阶段裁判仲裁相似问题根因，去重合并或新建知识库主题' },
-          { id: 'abc_sync', name: '6. ABC User Feedback 同步', icon: 'fa-solid fa-cloud-arrow-up', desc: '将已审核通过的知识库主题增量同步至 ABC 平台 Outbox' },
+          { id: 'insight_extraction', name: '4. 洞察提炼与事实核验', icon: 'fa-solid fa-lightbulb', desc: '调用大模型提炼产品缺陷、需求建议并严格锚定真实 Claim 证据链' },
         ];
 
         const stepCardClass = (step) => {
@@ -12349,6 +12483,7 @@
           dailyTrendAvg,
           dailyTrendActiveDays,
           shouldShowDateLabel,
+          tokenTrendSparkline,
           vocPeriod,
           vocReportLoading,
           generatingAiSummary,
