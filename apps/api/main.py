@@ -29,6 +29,11 @@ from packages.tasks.scheduled_task_manager import ScheduledTaskManager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Auto-seed database from sample_data/demo_seed.db if target database doesn't exist
+    db_path = os.getenv("CI_SQLITE_PATH", "chatinsight.db")
+    if not os.path.exists(db_path) and os.path.exists("sample_data/demo_seed.db"):
+        import shutil
+        shutil.copyfile("sample_data/demo_seed.db", db_path)
     # Initialize DB engine and create tables
     init_db_engine()
     await create_all_tables()

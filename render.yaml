@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: chatinsight-demo
+    repo: https://github.com/sniperXIA/ChatInsight-Platform
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: main
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: OPENROUTER_API_KEY
+        value: ""
+      - key: DEFAULT_VISION_MODEL
+        value: qwen3.8-flash
+      - key: DEFAULT_TEXT_MODEL
+        value: qwen3.8-flash
+      - key: CI_SQLITE_PATH
+        value: /app/chatinsight.db
+      - key: DATABASE_PATH
+        value: /app/chatinsight.db

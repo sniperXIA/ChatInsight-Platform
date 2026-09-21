@@ -30,6 +30,7 @@ htmlcov/
 *.db
 *.db-shm
 *.db-wal
+!sample_data/demo_seed.db
 data/
 derived/
 uploads/

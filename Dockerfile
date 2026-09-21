@@ -37,12 +37,23 @@ COPY .env.example /app/.env.example
 # Create data and cache directories
 RUN mkdir -p /app/data/cache /app/data/uploads /app/logs
 
+# Seed default demo database
+RUN cp /app/sample_data/demo_seed.db /app/chatinsight.db
+
 # Expose default HTTP port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+# Environment defaults for production demo
+ENV PORT=8000 \
+    OPENROUTER_API_KEY="" \
+    DEFAULT_VISION_MODEL=qwen3.8-flash \
+    DEFAULT_TEXT_MODEL=qwen3.8-flash \
+    CI_SQLITE_PATH=/app/chatinsight.db \
+    DATABASE_PATH=/app/chatinsight.db
 
-# Default command: launch FastAPI via Uvicorn
-CMD ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:${PORT:-8000}/api/v1/health || exit 1
+
+# Default command: launch FastAPI via Uvicorn with dynamic PORT support
+CMD ["sh", "-c", "uvicorn apps.api.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
