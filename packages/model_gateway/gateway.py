@@ -22,7 +22,12 @@ class ModelGateway:
         settings = SettingsManager.get_settings()
         api_key = settings.api_key or os.getenv("OPENROUTER_API_KEY", "")
 
-        if api_key or "localhost" in settings.base_url or "127.0.0.1" in settings.base_url:
+        is_custom_or_local = (
+            "localhost" in settings.base_url
+            or "127.0.0.1" in settings.base_url
+            or (settings.provider == "custom" and bool(settings.base_url))
+        )
+        if api_key or is_custom_or_local:
             timeout_s = getattr(settings, "request_timeout_seconds", 240.0) or 240.0
             return OpenRouterAdapter(
                 api_key=api_key,
@@ -40,7 +45,12 @@ class ModelGateway:
         settings = SettingsManager.get_settings()
         api_key = settings.api_key or os.getenv("OPENROUTER_API_KEY", "")
 
-        if api_key or "localhost" in settings.base_url or "127.0.0.1" in settings.base_url:
+        is_custom_or_local = (
+            "localhost" in settings.base_url
+            or "127.0.0.1" in settings.base_url
+            or (settings.provider == "custom" and bool(settings.base_url))
+        )
+        if api_key or is_custom_or_local:
             timeout_s = getattr(settings, "request_timeout_seconds", 240.0) or 240.0
             return OpenRouterAdapter(
                 api_key=api_key,
@@ -58,7 +68,12 @@ class ModelGateway:
         settings = SettingsManager.get_settings()
         api_key = settings.api_key or os.getenv("OPENROUTER_API_KEY", "")
 
-        if api_key or "localhost" in settings.base_url or "127.0.0.1" in settings.base_url:
+        is_custom_or_local = (
+            "localhost" in settings.base_url
+            or "127.0.0.1" in settings.base_url
+            or (settings.provider == "custom" and bool(settings.base_url))
+        )
+        if api_key or is_custom_or_local:
             timeout_s = getattr(settings, "request_timeout_seconds", 240.0) or 240.0
             return OpenRouterAdapter(
                 api_key=api_key,

@@ -51,7 +51,7 @@ config/feishu_bitable_settings.json
 config/scheduled_tasks.json
 
 # Private source archives and local reference repositories
-Demo用户聊天数据/
+# Demo用户聊天数据 included for production live demo media rendering
 references/
 
 # Local debugging and rendered artifacts

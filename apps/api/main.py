@@ -38,6 +38,30 @@ async def lifespan(app: FastAPI):
     # Initialize DB engine and create tables
     init_db_engine()
     await create_all_tables()
+
+    # Dynamic healing of source_root path for cloud container environments
+    demo_roots = [
+        Path("/app/Demo用户聊天数据"),
+        Path.cwd() / "Demo用户聊天数据",
+        (Path(__file__).resolve().parent.parent.parent / "Demo用户聊天数据"),
+    ]
+    for d_path in demo_roots:
+        if d_path.exists() and d_path.is_dir():
+            try:
+                from sqlalchemy import text
+                from packages.persistence.db import get_engine
+                engine = get_engine()
+                async with engine.begin() as conn:
+                    res = await conn.execute(text("SELECT id, root_path FROM source_root LIMIT 1"))
+                    row = res.first()
+                    if row and not os.path.exists(row[1]):
+                        await conn.execute(
+                            text("UPDATE source_root SET root_path = :new_path WHERE id = :id"),
+                            {"new_path": str(d_path.resolve()).replace("\\", "/"), "id": row[0]},
+                        )
+            except Exception:
+                pass
+            break
     # Start periodic autonomous task scheduler
     scheduler = ScheduledTaskManager.get_instance()
     scheduler.start_scheduler()

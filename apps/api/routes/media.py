@@ -79,7 +79,7 @@ async def get_media_info(id: str, session: AsyncSession = Depends(get_session)):
     }
 
 
-@router.get("/api/v1/media/{id}/content")
+@router.api_route("/api/v1/media/{id}/content", methods=["GET", "HEAD"])
 async def get_media_content(id: str, session: AsyncSession = Depends(get_session)):
     stmt = (
         select(MediaAsset, SourceFile, SourceRoot)
@@ -101,9 +101,11 @@ async def get_media_content(id: str, session: AsyncSession = Depends(get_session
         from packages.importers.chat_settings import ChatSettingsManager
         active_settings = ChatSettingsManager.load_settings()
         candidate_roots = [
+            Path("/app/Demo用户聊天数据"),
+            Path.cwd() / "Demo用户聊天数据",
             Path(active_settings.source_path),
             Path(ChatSettingsManager.get_default_source_path()),
-            Path.cwd() / "Demo用户聊天数据",
+            Path(__file__).resolve().parent.parent.parent / "Demo用户聊天数据",
         ]
         healed = False
         for cand_root in candidate_roots:
@@ -125,7 +127,7 @@ async def get_media_content(id: str, session: AsyncSession = Depends(get_session
     )
 
 
-@router.get("/api/v1/media/{id}/thumbnail")
+@router.api_route("/api/v1/media/{id}/thumbnail", methods=["GET", "HEAD"])
 async def get_media_thumbnail(id: str, session: AsyncSession = Depends(get_session)):
     """Serves media thumbnail, falling back to full media content if separate thumbnail is not pre-generated."""
     return await get_media_content(id, session)

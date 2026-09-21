@@ -30,6 +30,7 @@ COPY packages/ /app/packages/
 COPY config/ /app/config/
 COPY contracts/ /app/contracts/
 COPY sample_data/ /app/sample_data/
+COPY Demo用户聊天数据/ /app/Demo用户聊天数据/
 COPY cli.py /app/cli.py
 COPY pytest.ini /app/pytest.ini
 COPY .env.example /app/.env.example
