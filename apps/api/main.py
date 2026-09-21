@@ -103,8 +103,8 @@ if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-@app.get("/", response_class=HTMLResponse)
-@app.get("/dashboard", response_class=HTMLResponse)
+@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
+@app.api_route("/dashboard", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def dashboard_index():
     index_file = STATIC_DIR / "index.html"
     if index_file.exists():
