@@ -9,9 +9,14 @@
   <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/Database-SQLite%20Async%20WAL-003B57.svg?style=flat-square" alt="SQLite WAL"></a>
   <a href="https://openrouter.ai/"><img src="https://img.shields.io/badge/AI%20Gateway-OpenRouter%20%28Qwen--VL%20%7C%20DeepSeek%29-purple.svg?style=flat-square" alt="OpenRouter"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT%20(Commercial%20Free)-green.svg?style=flat-square" alt="MIT License"></a>
+  <a href="https://chatinsight-demo.onrender.com"><img src="https://img.shields.io/badge/Live%20Demo-Render%20Free-success?style=flat-square&logo=render" alt="Live Demo"></a>
   <a href="https://github.com/sniperXIA/ChatInsight-Platform/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/Release-v1.1.0-blue.svg?style=flat-square" alt="Release"></a>
   <a href="https://github.com/sniperXIA/ChatInsight-Platform"><img src="https://img.shields.io/badge/Tests-180%2B%20Passed%20100%25-brightgreen.svg?style=flat-square" alt="Tests"></a>
 </p>
+
+> 🚀 **线上免部署体验 (Live Demo)**：
+> 欢迎访问 Render 免费托管的实时演示站点：**[https://chatinsight-demo.onrender.com](https://chatinsight-demo.onrender.com)**  
+> *(注：已内置 3,651 条脱敏社群真实语料与完整 5W1H 洞察研报；基于 Render 免费实例托管，如遇冷休眠状态首次加载约需 30 秒)*
 
 ---
 
