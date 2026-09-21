@@ -47,6 +47,7 @@ config/chat_settings.json
 config/model_settings.json
 config/feishu_settings.json
 config/feishu_bitable_settings.json
+config/scheduled_tasks.json
 
 # Private source archives and local reference repositories
 Demo用户聊天数据/
@@ -56,3 +57,4 @@ references/
 scratch_inspect.py
 temp_app.js
 page_rendered.png
+walkthrough.md

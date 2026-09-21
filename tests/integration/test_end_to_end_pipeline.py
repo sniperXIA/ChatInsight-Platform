@@ -167,7 +167,7 @@ async def test_full_chatinsight_end_to_end_lifecycle(tmp_path: Path):
         # Phase 5: Analytics Overview & VoC Report Export
         # ----------------------------------------------------
         report_gen = ReportGenerator(session)
-        report = await report_gen.generate_report(period_label="全链路端到端验收周报", force_mock=True)
+        report = await report_gen.generate_report(period="all", period_label="全链路端到端验收周报", force_mock=True)
         assert report.total_feedbacks >= 1
         assert report.total_topics >= 1
         assert len(report.module_distribution) >= 1

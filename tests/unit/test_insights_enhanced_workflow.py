@@ -16,6 +16,7 @@ from packages.persistence.models import (
     EpisodeMessage,
     Insight,
     InsightClaim,
+    InsightPushRecord,
     Message,
     Participant,
     Topic,
@@ -244,5 +245,197 @@ async def test_insights_enhanced_filters_and_evidence():
         assert "c_1" in ev_data["messages"][0]["cited_claims"]
         assert ev_data["messages"][1]["is_cited"] is True
         assert "c_2" in ev_data["messages"][1]["cited_claims"]
+        assert ev_data.get("created_at") is not None
+
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_insights_stats_aggregation_accuracy():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_maker = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with session_maker() as session:
+        # Seed insights with various severities and dates
+        i_blocker = Insight(
+            id="ins_b1",
+            workspace_id="ws_1",
+            episode_id="ep_1",
+            insight_type="issue",
+            module="固件与系统",
+            severity="blocker",
+            priority="P0",
+            summary="固件升级黑屏变砖",
+            description="升级到v2.1后吉他无法开机",
+            status_in_chat="unresolved",
+            support_known_status=False,
+            factual_score=0.95,
+            confidence=0.95,
+            created_at=datetime(2026, 9, 1, 10, 0, 0),
+        )
+        i_major1 = Insight(
+            id="ins_m1",
+            workspace_id="ws_1",
+            episode_id="ep_1",
+            insight_type="issue",
+            module="蓝牙与无线",
+            severity="major",
+            priority="P1",
+            summary="蓝牙经常断连",
+            description="蓝牙播放伴奏频繁卡顿",
+            status_in_chat="unresolved",
+            support_known_status=False,
+            factual_score=0.90,
+            confidence=0.90,
+            created_at=datetime(2026, 9, 2, 10, 0, 0),
+        )
+        i_major2 = Insight(
+            id="ins_m2",
+            workspace_id="ws_1",
+            episode_id="ep_1",
+            insight_type="issue",
+            module="界面与显示",
+            severity="major",
+            priority="P1",
+            summary="谱面白屏闪退",
+            description="进入曲谱页偶发闪退",
+            status_in_chat="unresolved",
+            support_known_status=False,
+            factual_score=0.88,
+            confidence=0.88,
+            created_at=datetime(2026, 9, 3, 10, 0, 0),
+        )
+        i_minor1 = Insight(
+            id="ins_min1",
+            workspace_id="ws_1",
+            episode_id="ep_1",
+            insight_type="feature_request",
+            module="曲谱与乐库",
+            severity="minor",
+            priority="P2",
+            summary="希望支持吉他六线谱切换",
+            description="目前只有简谱",
+            status_in_chat="unresolved",
+            support_known_status=False,
+            factual_score=0.85,
+            confidence=0.85,
+            created_at=datetime(2026, 9, 4, 10, 0, 0),
+        )
+        i_triv1 = Insight(
+            id="ins_tr1",
+            workspace_id="ws_1",
+            episode_id="ep_1",
+            insight_type="usability_opportunity",
+            module="界面与显示",
+            severity="trivial",
+            priority="P3",
+            summary="按键提示文字偏小",
+            description="暗色模式下对比度可以更高",
+            status_in_chat="unresolved",
+            support_known_status=False,
+            factual_score=0.75,
+            confidence=0.75,
+            created_at=datetime(2026, 9, 5, 10, 0, 0),
+        )
+        session.add_all([i_blocker, i_major1, i_major2, i_minor1, i_triv1])
+
+        # Seed push records:
+        # ins_b1: success
+        rec_b1 = InsightPushRecord(
+            id="rec_1",
+            workspace_id="ws_1",
+            insight_id="ins_b1",
+            target_platform="feishu_bitable",
+            webhook_url="https://feishu.cn/webhook/1",
+            state="success",
+            status_code=200,
+            created_at=datetime(2026, 9, 6, 10, 0, 0),
+        )
+        # ins_m1: failed
+        rec_m1 = InsightPushRecord(
+            id="rec_2",
+            workspace_id="ws_1",
+            insight_id="ins_m1",
+            target_platform="feishu_bitable",
+            webhook_url="https://feishu.cn/webhook/1",
+            state="failed",
+            status_code=500,
+            error_message="Gateway timeout",
+            created_at=datetime(2026, 9, 6, 11, 0, 0),
+        )
+        # Orphan push record: points to non-existent insight
+        rec_orphan = InsightPushRecord(
+            id="rec_orphan",
+            workspace_id="ws_1",
+            insight_id="ins_non_existent",
+            target_platform="feishu_bitable",
+            webhook_url="https://feishu.cn/webhook/1",
+            state="success",
+            status_code=200,
+            created_at=datetime(2026, 9, 6, 12, 0, 0),
+        )
+        session.add_all([rec_b1, rec_m1, rec_orphan])
+        await session.commit()
+
+    async def override_get_session():
+        async with session_maker() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_get_session
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # 1. Test overall stats aggregation
+        res = await client.get("/api/v1/insights/stats")
+        assert res.status_code == 200
+        stats = res.json()
+
+        assert stats["total_insights"] == 5
+        assert stats["blocker_major_count"] == 3
+        assert stats["blocker_count"] == 1
+        assert stats["major_count"] == 2
+        assert stats["minor_count"] == 1
+        assert stats["trivial_count"] == 1
+
+        # Orphan record should NOT be counted in pushed_success_count
+        assert stats["pushed_success_count"] == 1
+        assert stats["pushed_failed_count"] == 1
+        assert stats["pending_push_count"] == 4  # 5 total - 1 success = 4
+        assert stats["push_success_rate"] == 20.0  # 1 / 5 * 100
+
+        # Global baselines
+        assert stats["global_total_insights"] == 5
+        assert stats["global_blocker_major_count"] == 3
+        assert stats["global_pending_push_count"] == 4
+        assert stats["global_pushed_success_count"] == 1
+
+        # 2. Test filtered stats by severity
+        res_sev = await client.get("/api/v1/insights/stats?severity=blocker")
+        assert res_sev.status_code == 200
+        sev_stats = res_sev.json()
+        assert sev_stats["total_insights"] == 1
+        assert sev_stats["blocker_major_count"] == 1
+        assert sev_stats["blocker_count"] == 1
+        assert sev_stats["major_count"] == 0
+        assert sev_stats["pushed_success_count"] == 1
+        assert sev_stats["pending_push_count"] == 0
+        assert sev_stats["global_total_insights"] == 5
+
+        # 3. Test filtered stats by push_status=success
+        res_push = await client.get("/api/v1/insights/stats?push_status=success")
+        assert res_push.status_code == 200
+        push_stats = res_push.json()
+        assert push_stats["total_insights"] == 1
+        assert push_stats["pushed_success_count"] == 1
+        assert push_stats["global_total_insights"] == 5
+
+        # 4. Test list_insights with limit up to 500
+        res_list = await client.get("/api/v1/insights?limit=300")
+        assert res_list.status_code == 200
+        items = res_list.json()
+        assert len(items) == 5
 
     app.dependency_overrides.clear()

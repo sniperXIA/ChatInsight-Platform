@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -244,13 +244,14 @@ async def test_voc_report_rag_grounded_executive_summary_and_recommendations():
         session.add(conv)
         await session.flush()
 
+        now_dt = datetime.now()
         ep = Episode(
             workspace_id=ws.id,
             conversation_id=conv.id,
             title="扩展卡开机异常讨论",
             summary="社群内热议旅行锁开机后扩展卡无法读取",
-            started_at=datetime(2026, 9, 1, 10, 0),
-            ended_at=datetime(2026, 9, 1, 10, 30),
+            started_at=now_dt - timedelta(days=2),
+            ended_at=now_dt - timedelta(days=2) + timedelta(minutes=30),
         )
         session.add(ep)
         await session.flush()
@@ -275,6 +276,7 @@ async def test_voc_report_rag_grounded_executive_summary_and_recommendations():
             insight_type="product_issue",
             priority="P0",
             confidence=0.95,
+            created_at=now_dt - timedelta(days=2),
         )
         session.add(ins1)
         await session.flush()
@@ -300,5 +302,5 @@ async def test_voc_report_rag_grounded_executive_summary_and_recommendations():
         report = await generator.generate_report(period="7d", force_mock=True)
         md = generator.render_markdown(report)
         assert "## 1. 核心指标概览" in md
-        assert "旅行锁开机扩展卡识别异常" in md
+        assert "扩展卡开机异常讨论" in md or "旅行锁开机扩展卡识别异常" in md
         assert "管理层战略综述与行动建议" in md

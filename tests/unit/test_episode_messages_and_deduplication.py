@@ -61,11 +61,94 @@ def test_episode_deduplicator_clustering():
     assert "琴友小张" in sound_cluster.participants
     assert "吉他老王" in sound_cluster.participants
     assert len(sound_cluster.conversations) == 2
+    assert sound_cluster.first_discussed_at == "2026-08-25T10:00:00"
+    assert sound_cluster.last_discussed_at == "2026-08-25T11:30:00"
 
     # Verify Bluetooth Cluster
     bt_cluster = next(c for c in clusters if c.category_hint in ("software_app", "bluetooth_conn"))
     assert bt_cluster.episode_count == 1
     assert bt_cluster.total_messages == 4
+    assert bt_cluster.first_discussed_at == "2026-08-25T12:00:00"
+    assert bt_cluster.last_discussed_at == "2026-08-25T12:15:00"
+
+
+def test_episode_deduplicator_time_filtering():
+    episodes = [
+        EpisodeItemView(
+            id="ep1",
+            conversation_id="c1",
+            conversation_name="群聊A",
+            title="话题探讨: 音色切换与扩展卡 - 无法加载",
+            summary="咨询扩展音色卡加载失败与插拔问题",
+            category_hint="sound_preset",
+            started_at="2026-08-25T10:00:00",
+            ended_at="2026-08-25T10:20:00",
+            message_count=5,
+            participants=["琴友小张"],
+        ),
+        EpisodeItemView(
+            id="ep2",
+            conversation_id="c2",
+            conversation_name="群聊B",
+            title="话题探讨: 音色与扩展卡音质表现",
+            summary="讨论扩展卡音色丰富度和切换手感",
+            category_hint="sound_preset",
+            started_at="2026-08-27T11:00:00",
+            ended_at="2026-08-27T11:30:00",
+            message_count=8,
+            participants=["吉他老王"],
+        ),
+        EpisodeItemView(
+            id="ep3",
+            conversation_id="c1",
+            conversation_name="群聊A",
+            title="话题探讨: 蓝牙与无线连接异常",
+            summary="反馈手机App蓝牙连接断开及无法搜索到设备",
+            category_hint="software_app",
+            started_at="2026-08-28T12:00:00",
+            ended_at="2026-08-28T12:15:00",
+            message_count=4,
+            participants=["新琴友"],
+        ),
+    ]
+
+    # Without filter: both clusters returned
+    all_clusters = EpisodeDeduplicator.deduplicate_episodes(episodes)
+    assert len(all_clusters) == 2
+    sound = next(c for c in all_clusters if "音色" in c.canonical_title)
+    assert sound.first_discussed_at == "2026-08-25T10:00:00"
+    assert sound.last_discussed_at == "2026-08-27T11:30:00"
+
+    # Filter by first_discussed_at between 2026-08-26 and 2026-08-28
+    # Sound cluster first discussed on 2026-08-25, so should be excluded
+    first_filtered = EpisodeDeduplicator.deduplicate_episodes(
+        episodes,
+        time_filter_type="first_discussed",
+        start_date="2026-08-26",
+        end_date="2026-08-28",
+    )
+    assert len(first_filtered) == 1
+    assert "蓝牙" in first_filtered[0].canonical_title
+
+    # Filter by last_discussed_at between 2026-08-26 and 2026-08-28
+    # Sound cluster last discussed on 2026-08-27, bluetooth on 2026-08-28 -> both included
+    last_filtered = EpisodeDeduplicator.deduplicate_episodes(
+        episodes,
+        time_filter_type="last_discussed",
+        start_date="2026-08-26",
+        end_date="2026-08-28",
+    )
+    assert len(last_filtered) == 2
+
+    # Filter by last_discussed_at with single day 2026-08-27
+    day_27 = EpisodeDeduplicator.deduplicate_episodes(
+        episodes,
+        time_filter_type="last_discussed",
+        start_date="2026-08-27",
+        end_date="2026-08-27",
+    )
+    assert len(day_27) == 1
+    assert "音色" in day_27[0].canonical_title
 
 
 @pytest_asyncio.fixture
@@ -179,3 +262,18 @@ async def test_episode_messages_and_clusters_api(client):
     detail = detail_res.json()
     assert detail["episode"]["id"] == ep_id
     assert len(detail["messages"]) == 2
+
+    # 4. Test GET /api/v1/episodes with date range filtering
+    today_str = now.strftime("%Y-%m-%d")
+    yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Match today
+    ep_res_today = await ac.get(f"/api/v1/episodes?start_date={today_str}&end_date={today_str}")
+    assert ep_res_today.status_code == 200
+    assert len(ep_res_today.json()) >= 1
+    assert ep_res_today.json()[0]["id"] == ep_id
+
+    # Miss yesterday
+    ep_res_past = await ac.get(f"/api/v1/episodes?start_date={yesterday_str}&end_date={yesterday_str}")
+    assert ep_res_past.status_code == 200
+    assert len(ep_res_past.json()) == 0

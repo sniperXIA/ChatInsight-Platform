@@ -46,6 +46,8 @@ class DistinctTopicCluster(BaseModel):
     conversations: list[str]
     started_at: str
     ended_at: str
+    first_discussed_at: Optional[str] = None
+    last_discussed_at: Optional[str] = None
     episodes: list[EpisodeItemView]
 
 
@@ -357,7 +359,10 @@ class EpisodeDeduplicator:
     def deduplicate_episodes(
         cls,
         episodes: list[EpisodeItemView],
-        sort_by: str = "latest"  # latest | first_seen | frequency
+        sort_by: str = "latest",  # latest | first_seen | frequency
+        time_filter_type: Optional[str] = None,  # first_discussed | last_discussed
+        start_date: Optional[str] = None,  # YYYY-MM-DD
+        end_date: Optional[str] = None,  # YYYY-MM-DD
     ) -> list[DistinctTopicCluster]:
         if not episodes:
             return []
@@ -508,16 +513,35 @@ class EpisodeDeduplicator:
                     conversations=list(all_conversations),
                     started_at=earliest_time,
                     ended_at=latest_time,
+                    first_discussed_at=earliest_time,
+                    last_discussed_at=latest_time,
                     episodes=ep_list,
                 )
             )
 
+        # 5. Date Filtering Engine (Single-active date filter based on time_filter_type)
+        if start_date or end_date:
+            norm_start = start_date.strip()[:10] if start_date and start_date.strip() else None
+            norm_end = end_date.strip()[:10] if end_date and end_date.strip() else None
+            filtered_result = []
+            for c in result:
+                target_time = c.first_discussed_at if time_filter_type == "first_discussed" else c.last_discussed_at
+                target_date = (target_time or "")[:10]
+                if not target_date:
+                    continue
+                if norm_start and target_date < norm_start:
+                    continue
+                if norm_end and target_date > norm_end:
+                    continue
+                filtered_result.append(c)
+            result = filtered_result
+
         # 6. Multi-dimensional Sorting Engine
         if sort_by == "frequency":
-            result.sort(key=lambda c: (c.total_messages, c.episode_count, c.ended_at), reverse=True)
+            result.sort(key=lambda c: (c.total_messages, c.episode_count, c.last_discussed_at or c.ended_at), reverse=True)
         elif sort_by == "first_seen":
-            result.sort(key=lambda c: (c.started_at, -c.total_messages), reverse=False)
+            result.sort(key=lambda c: (c.first_discussed_at or c.started_at, -c.total_messages), reverse=False)
         else:  # default: 'latest'
-            result.sort(key=lambda c: (c.ended_at, c.total_messages), reverse=True)
+            result.sort(key=lambda c: (c.last_discussed_at or c.ended_at, c.total_messages), reverse=True)
 
         return result

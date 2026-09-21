@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -151,15 +152,33 @@ def _resolve_participants(raw_parts: list[str], nick_map: dict[str, str]) -> lis
 async def list_all_episodes(
     conversation_id: Optional[str] = Query(default=None),
     sort_by: str = Query(default="latest", description="latest | first_seen | frequency | messages"),
-    limit: int = Query(default=100, ge=1, le=500),
+    start_date: Optional[str] = Query(default=None, description="YYYY-MM-DD"),
+    end_date: Optional[str] = Query(default=None, description="YYYY-MM-DD"),
+    limit: int = Query(default=200, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
 ):
     stmt = select(Episode, Conversation).join(Conversation, Episode.conversation_id == Conversation.id)
     if conversation_id and isinstance(conversation_id, str):
         stmt = stmt.where(Episode.conversation_id == conversation_id)
+
+    if start_date and isinstance(start_date, str) and start_date.strip():
+        sd = start_date.strip()[:10]
+        try:
+            start_dt = datetime.strptime(f"{sd} 00:00:00", "%Y-%m-%d %H:%M:%S")
+            stmt = stmt.where(Episode.started_at >= start_dt)
+        except Exception:
+            pass
+
+    if end_date and isinstance(end_date, str) and end_date.strip():
+        ed = end_date.strip()[:10]
+        try:
+            end_dt = datetime.strptime(f"{ed} 23:59:59", "%Y-%m-%d %H:%M:%S")
+            stmt = stmt.where(Episode.started_at <= end_dt)
+        except Exception:
+            pass
     
-    lim = int(limit) if isinstance(limit, (int, str)) and str(limit).isdigit() else 100
+    lim = int(limit) if isinstance(limit, (int, str)) and str(limit).isdigit() else 200
     off = int(offset) if isinstance(offset, (int, str)) and str(offset).isdigit() else 0
     
     if sort_by == "first_seen":
@@ -222,7 +241,10 @@ async def list_all_episodes(
 async def list_distinct_topic_clusters(
     conversation_id: Optional[str] = Query(default=None),
     sort_by: str = Query(default="latest", description="latest | first_seen | frequency"),
-    limit: int = Query(default=300, ge=1, le=1000),
+    time_filter_type: Optional[str] = Query(default="first_discussed", description="first_discussed | last_discussed"),
+    start_date: Optional[str] = Query(default=None, description="YYYY-MM-DD"),
+    end_date: Optional[str] = Query(default=None, description="YYYY-MM-DD"),
+    limit: int = Query(default=500, ge=1, le=2000),
     session: AsyncSession = Depends(get_session),
 ):
     """Returns deduplicated, distinct topic clusters aggregating similar episodes with multi-level tags and sorting."""
@@ -230,7 +252,7 @@ async def list_distinct_topic_clusters(
     if conversation_id and isinstance(conversation_id, str):
         stmt = stmt.where(Episode.conversation_id == conversation_id)
     
-    lim = int(limit) if isinstance(limit, (int, str)) and str(limit).isdigit() else 300
+    lim = int(limit) if isinstance(limit, (int, str)) and str(limit).isdigit() else 500
     stmt = stmt.order_by(desc(Episode.started_at)).limit(lim)
     res = await session.execute(stmt)
     rows = res.all()
@@ -255,7 +277,13 @@ async def list_distinct_topic_clusters(
         for ep, conv in rows
     ]
 
-    return EpisodeDeduplicator.deduplicate_episodes(episode_views, sort_by=sort_by)
+    return EpisodeDeduplicator.deduplicate_episodes(
+        episode_views,
+        sort_by=sort_by,
+        time_filter_type=time_filter_type,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 @router.get("/api/v1/episodes/{id}/messages", response_model=list[EpisodeMessageDetail])

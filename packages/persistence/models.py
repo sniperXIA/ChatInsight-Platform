@@ -277,6 +277,7 @@ class Insight(Base):
     sub_module = Column(String(128), nullable=True)
     severity = Column(String(32), nullable=False, default="minor")  # blocker | major | minor | trivial
     priority = Column(String(32), nullable=False, default="P2")
+    device_model = Column(String(64), nullable=True)  # 关联设备机型，如 C2, U1 等，无法明确则为空
     summary = Column(Text, nullable=False)
     description = Column(Text, nullable=False)
     status_in_chat = Column(String(64), nullable=False, default="unresolved")  # unresolved | support_acknowledged | workaround_provided | fix_confirmed

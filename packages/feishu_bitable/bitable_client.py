@@ -128,12 +128,15 @@ class FeishuBitableClient:
             "5W1H事实": fact_5w1h,
             "严重级别": severity_zh,
         }
+        if getattr(insight, "device_model", None):
+            record_fields["设备机型"] = insight.device_model
 
         # Provide both flat root fields and nested `fields` object for 100% Feishu Bitable compatibility
         payload = {
             **record_fields,
             "fields": record_fields,
             "insight_id": insight.id,
+            "device_model": getattr(insight, "device_model", "") or "",
             "priority": insight.priority or "P1",
             "drilldown_uri": f"chatinsight://insights/{insight.id}",
         }

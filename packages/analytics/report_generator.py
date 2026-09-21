@@ -1,8 +1,9 @@
-from datetime import date, datetime, timedelta
+from collections import defaultdict
+from datetime import date, datetime, time as dt_time, timedelta
 import json
 import re
 from typing import Any, Optional
-from sqlalchemy import and_, desc, func, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.analytics.contracts import (
@@ -11,15 +12,20 @@ from packages.analytics.contracts import (
     DailyTrendPoint,
     HighValueContent,
     HighValueTopicItem,
+    HourlyTrendPoint,
     MetricDistribution,
     ModelTokenUsage,
     OperationalOverview,
     PeriodComparison,
+    RunTypeMetricItem,
     SubCategoryItem,
+    TokenTrendPoint,
     TokenUsageMetrics,
+    TokenScopeMetrics,
     TopicMetricItem,
     VoCReportOutput,
 )
+from packages.insights.episode_deduplicator import EpisodeDeduplicator, EpisodeItemView
 from packages.insights.tag_manager import TagManager
 from packages.model_gateway.gateway import ModelGateway
 from packages.persistence.models import (
@@ -29,6 +35,7 @@ from packages.persistence.models import (
     EpisodeMessage,
     Insight,
     InsightClaim,
+    InsightPushRecord,
     Message,
     Participant,
     ResearchQueryRecord,
@@ -37,6 +44,27 @@ from packages.persistence.models import (
 )
 from packages.retrieval.vector_service import VectorService
 from packages.search.research_assistant import parse_5w1h_dict
+
+
+def _episodes_to_views(episodes: list[Episode]) -> list[EpisodeItemView]:
+    """Helper to convert ORM Episode models to EpisodeItemView for deduplication and clustering."""
+    return [
+        EpisodeItemView(
+            id=ep.id,
+            conversation_id=ep.conversation_id,
+            conversation_name=None,
+            title=ep.title or "",
+            summary=ep.summary or "",
+            category_hint=ep.category_hint or "综合体验",
+            started_at=ep.started_at.isoformat() if ep.started_at else "",
+            ended_at=ep.ended_at.isoformat() if ep.ended_at else "",
+            message_count=ep.message_count or 0,
+            participants=ep.participants_json or [],
+            media_ids=ep.media_json or [],
+            state=ep.state or "active",
+        )
+        for ep in episodes
+    ]
 
 FEATURE_NAME_MAP = {
     "segmentation": "社群话题切分",
@@ -51,6 +79,19 @@ FEATURE_NAME_MAP = {
     "voc_report": "VoC战略报告",
     "bitable_push": "飞书表格推送",
     "abc_sync": "飞书表格推送",
+}
+
+RUN_TYPE_CONFIG = {
+    "episode": {"name_zh": "对话切分与话题提取", "icon": "fa-solid fa-layer-group"},
+    "insight_extraction": {"name_zh": "需求洞察深度提炼", "icon": "fa-solid fa-lightbulb"},
+    "insights": {"name_zh": "需求洞察深度提炼", "icon": "fa-solid fa-lightbulb"},
+    "research_assistant": {"name_zh": "智能研究问答助手", "icon": "fa-solid fa-robot"},
+    "voc_report": {"name_zh": "VoC 业务战略综述", "icon": "fa-solid fa-chart-pie"},
+    "image_enrichment": {"name_zh": "多模态图片解析", "icon": "fa-solid fa-image"},
+    "video_enrichment": {"name_zh": "多模态视频解析", "icon": "fa-solid fa-video"},
+    "multimodal": {"name_zh": "多模态视觉解析", "icon": "fa-solid fa-image"},
+    "pairwise_judge": {"name_zh": "两阶段裁判仲裁", "icon": "fa-solid fa-scale-balanced"},
+    "clustering": {"name_zh": "主题聚类归因", "icon": "fa-solid fa-cubes"},
 }
 
 
@@ -72,55 +113,249 @@ class ReportGenerator:
         self.vector_service = vector_service or VectorService(session, self.gateway)
 
     async def _resolve_period_dates(
-        self, period: str = "7d"
-    ) -> tuple[datetime, datetime, datetime, datetime, str, int]:
+        self, period: str = "7d", now: Optional[datetime] = None
+    ) -> tuple[datetime, datetime, datetime, datetime, str, int, str]:
         """
-        Resolves current and comparison window dates.
-        Smartly anchors to the active dataset date if today has no incoming data.
+        Resolves current and comparison window dates strictly anchored to real calendar time (today).
+        Returns:
+            curr_start, curr_end, prev_start, prev_end, label, days_count, comparison_label
         """
-        now = datetime.now()
-        max_m_stmt = select(func.max(Message.sent_at))
-        max_date_val = (await self.session.execute(max_m_stmt)).scalar()
-        
+        if now is None:
+            now = datetime.now()
         anchor_date = now.date()
-        if max_date_val and (now.date() - max_date_val.date()).days > 5:
-            anchor_date = max_date_val.date()
 
         norm_p = (period or "7d").lower().strip()
 
         if norm_p in ("today", "1d", "day"):
-            curr_start = datetime.combine(anchor_date, datetime.min.time())
-            curr_end = datetime.combine(anchor_date, datetime.max.time())
+            curr_start = datetime.combine(anchor_date, dt_time.min)
+            curr_end = datetime.combine(anchor_date, dt_time.max)
             days_count = 1
-            prev_start = curr_start - timedelta(days=1)
-            prev_end = curr_end - timedelta(days=1)
+            prev_start = datetime.combine(anchor_date - timedelta(days=1), dt_time.min)
+            prev_end = datetime.combine(anchor_date - timedelta(days=1), dt_time.max)
+            comparison_label = f"对比{prev_start.strftime('%Y-%m-%d')}"
             label = f"{anchor_date.strftime('%Y年%m月%d日')} 社群业务运营日报"
         elif norm_p in ("30d", "month"):
-            curr_end = datetime.combine(anchor_date, datetime.max.time())
-            curr_start = curr_end - timedelta(days=30)
+            curr_end = datetime.combine(anchor_date, dt_time.max)
+            curr_start = datetime.combine(anchor_date - timedelta(days=29), dt_time.min)
             days_count = 30
-            prev_end = curr_start
-            prev_start = prev_end - timedelta(days=30)
+            prev_end = datetime.combine(curr_start.date() - timedelta(days=1), dt_time.max)
+            prev_start = datetime.combine(curr_start.date() - timedelta(days=30), dt_time.min)
+            comparison_label = f"对比{prev_start.strftime('%Y-%m-%d')}至{prev_end.strftime('%Y-%m-%d')}"
             label = f"{curr_start.strftime('%m月%d日')} ~ {curr_end.strftime('%m月%d日')} 社群 VoC 业务月度简报"
         elif norm_p in ("all", "all_time"):
             min_m_stmt = select(func.min(Message.sent_at))
-            min_date_val = (await self.session.execute(min_m_stmt)).scalar() or datetime(2026, 1, 1)
-            curr_start = datetime.combine(min_date_val.date(), datetime.min.time())
-            curr_end = datetime.combine(max(anchor_date, now.date()), datetime.max.time())
+            try:
+                min_date_val = (await self.session.execute(min_m_stmt)).scalar()
+            except Exception:
+                min_date_val = None
+            if not min_date_val:
+                min_date_val = datetime(2026, 1, 1)
+            curr_start = datetime.combine(min_date_val.date(), dt_time.min)
+            curr_end = datetime.combine(anchor_date, dt_time.max)
             days_count = max(1, (curr_end.date() - curr_start.date()).days + 1)
             prev_start = curr_start
             prev_end = curr_end
+            comparison_label = "全量历史无对比周期"
             label = "ChatInsight 平台全周期运营与 VoC 综合报告"
         else:  # default "7d" / "week"
             norm_p = "7d"
-            curr_end = datetime.combine(anchor_date, datetime.max.time())
-            curr_start = curr_end - timedelta(days=7)
+            curr_end = datetime.combine(anchor_date, dt_time.max)
+            curr_start = datetime.combine(anchor_date - timedelta(days=6), dt_time.min)
             days_count = 7
-            prev_end = curr_start
-            prev_start = prev_end - timedelta(days=7)
+            prev_end = datetime.combine(anchor_date - timedelta(days=7), dt_time.max)
+            prev_start = datetime.combine(anchor_date - timedelta(days=13), dt_time.min)
+            comparison_label = f"对比{prev_start.strftime('%Y-%m-%d')}至{prev_end.strftime('%Y-%m-%d')}"
             label = f"{curr_start.strftime('%m月%d日')} ~ {curr_end.strftime('%m月%d日')} 社群 VoC 业务运营周报"
 
-        return curr_start, curr_end, prev_start, prev_end, label, days_count
+        return curr_start, curr_end, prev_start, prev_end, label, days_count, comparison_label
+
+    async def _aggregate_token_scope(
+        self,
+        start_dt: Optional[datetime],
+        end_dt: Optional[datetime],
+        is_all: bool = False,
+        active_model: str = "qwen3.8-flash",
+    ) -> TokenScopeMetrics:
+        """
+        Aggregates token consumption, model breakdown, feature calls, and success rate
+        for a specific time window without artificial fallbacks.
+        """
+        # 1. Query AnalysisRun totals
+        tok_stmt = select(
+            func.sum(AnalysisRun.total_tokens),
+            func.sum(AnalysisRun.input_tokens),
+            func.sum(AnalysisRun.output_tokens),
+            func.count(AnalysisRun.id),
+        )
+        if not is_all and start_dt and end_dt:
+            tok_stmt = tok_stmt.where(AnalysisRun.started_at.between(start_dt, end_dt))
+
+        t_res = (await self.session.execute(tok_stmt)).first()
+        t_tot = int(t_res[0] or 0) if t_res else 0
+        t_in = int(t_res[1] or 0) if t_res else 0
+        t_out = int(t_res[2] or 0) if t_res else 0
+        t_runs = int(t_res[3] or 0) if t_res else 0
+
+        # 2. Query ResearchQueryRecord totals
+        ra_tok_stmt = select(
+            func.sum(ResearchQueryRecord.total_tokens),
+            func.sum(ResearchQueryRecord.prompt_tokens),
+            func.sum(ResearchQueryRecord.completion_tokens),
+            func.count(ResearchQueryRecord.id),
+        )
+        if not is_all and start_dt and end_dt:
+            ra_tok_stmt = ra_tok_stmt.where(ResearchQueryRecord.created_at.between(start_dt, end_dt))
+        ra_tok_res = (await self.session.execute(ra_tok_stmt)).first()
+        ra_tot = int(ra_tok_res[0] or 0) if ra_tok_res else 0
+        ra_in = int(ra_tok_res[1] or 0) if ra_tok_res else 0
+        ra_out = int(ra_tok_res[2] or 0) if ra_tok_res else 0
+        ra_runs = int(ra_tok_res[3] or 0) if ra_tok_res else 0
+
+        total_tok = t_tot + ra_tot
+        total_in = t_in + ra_in
+        total_out = t_out + ra_out
+        total_runs = t_runs + ra_runs
+
+        # 3. Success rate in this scope
+        run_count_stmt = select(func.count(AnalysisRun.id))
+        failed_count_stmt = select(func.count(AnalysisRun.id)).where(AnalysisRun.state == "failed")
+        if not is_all and start_dt and end_dt:
+            run_count_stmt = run_count_stmt.where(AnalysisRun.started_at.between(start_dt, end_dt))
+            failed_count_stmt = failed_count_stmt.where(AnalysisRun.started_at.between(start_dt, end_dt))
+
+        runs_cnt = (await self.session.execute(run_count_stmt)).scalar() or 0
+        failed_cnt = (await self.session.execute(failed_count_stmt)).scalar() or 0
+        succ_rate = round(((runs_cnt - failed_cnt) / runs_cnt) * 100.0, 1) if runs_cnt > 0 else 100.0
+
+        # 4. Runs by type & Chinese feature breakdown in this scope
+        runs_type_stmt = select(AnalysisRun.run_type, func.count(AnalysisRun.id))
+        if not is_all and start_dt and end_dt:
+            runs_type_stmt = runs_type_stmt.where(AnalysisRun.started_at.between(start_dt, end_dt))
+        runs_type_stmt = runs_type_stmt.group_by(AnalysisRun.run_type)
+        runs_by_type_rows = (await self.session.execute(runs_type_stmt)).all()
+        runs_by_type = {row[0]: int(row[1]) for row in runs_by_type_rows if row[0]}
+        if ra_runs > 0:
+            runs_by_type["research_assistant"] = runs_by_type.get("research_assistant", 0) + ra_runs
+
+        runs_by_feature = {
+            FEATURE_NAME_MAP.get(k, k): v for k, v in runs_by_type.items()
+        }
+
+        # 5. Models Breakdown in this scope
+        model_run_stmt = select(
+            AnalysisRun.model,
+            func.sum(AnalysisRun.total_tokens),
+            func.sum(AnalysisRun.input_tokens),
+            func.sum(AnalysisRun.output_tokens),
+            func.count(AnalysisRun.id),
+        )
+        if not is_all and start_dt and end_dt:
+            model_run_stmt = model_run_stmt.where(AnalysisRun.started_at.between(start_dt, end_dt))
+        model_run_stmt = model_run_stmt.group_by(AnalysisRun.model)
+        model_run_rows = (await self.session.execute(model_run_stmt)).all()
+
+        ra_model_stmt = select(
+            ResearchQueryRecord.model_used,
+            func.sum(ResearchQueryRecord.total_tokens),
+            func.sum(ResearchQueryRecord.prompt_tokens),
+            func.sum(ResearchQueryRecord.completion_tokens),
+            func.count(ResearchQueryRecord.id),
+        )
+        if not is_all and start_dt and end_dt:
+            ra_model_stmt = ra_model_stmt.where(ResearchQueryRecord.created_at.between(start_dt, end_dt))
+        ra_model_stmt = ra_model_stmt.group_by(ResearchQueryRecord.model_used)
+        ra_model_rows = (await self.session.execute(ra_model_stmt)).all()
+
+        model_map: dict[str, dict[str, int]] = {}
+        for m_name, tot, p_in, p_out, cnt in model_run_rows:
+            if not m_name:
+                continue
+            entry = model_map.setdefault(m_name, {"total": 0, "prompt": 0, "completion": 0, "calls": 0})
+            entry["total"] += int(tot or 0)
+            entry["prompt"] += int(p_in or 0)
+            entry["completion"] += int(p_out or 0)
+            entry["calls"] += int(cnt or 0)
+
+        for m_name, tot, p_in, p_out, cnt in ra_model_rows:
+            # Strictly filter out non-LLM zero-recall direct fallback ("system-direct")
+            if not m_name or m_name == "system-direct":
+                continue
+            entry = model_map.setdefault(m_name, {"total": 0, "prompt": 0, "completion": 0, "calls": 0})
+            entry["total"] += int(tot or 0)
+            entry["prompt"] += int(p_in or 0)
+            entry["completion"] += int(p_out or 0)
+            entry["calls"] += int(cnt or 0)
+
+        grand_total_tokens = sum(e["total"] for e in model_map.values()) or max(int(total_tok), 1)
+
+        models_breakdown: list[ModelTokenUsage] = []
+        for m_name, stats_dict in sorted(model_map.items(), key=lambda x: x[1]["total"], reverse=True):
+            pct = round((stats_dict["total"] / grand_total_tokens) * 100.0, 1)
+            models_breakdown.append(
+                ModelTokenUsage(
+                    model=m_name,
+                    model_name=m_name,
+                    total_tokens=stats_dict["total"],
+                    prompt_tokens=stats_dict["prompt"],
+                    completion_tokens=stats_dict["completion"],
+                    call_count=stats_dict["calls"],
+                    runs_count=stats_dict["calls"],
+                    percentage=pct,
+                )
+            )
+
+        # 6. run_types_breakdown
+        type_token_stmt = select(
+            AnalysisRun.run_type,
+            func.sum(AnalysisRun.total_tokens),
+            func.count(AnalysisRun.id),
+        )
+        if not is_all and start_dt and end_dt:
+            type_token_stmt = type_token_stmt.where(AnalysisRun.started_at.between(start_dt, end_dt))
+        type_token_stmt = type_token_stmt.group_by(AnalysisRun.run_type)
+        type_token_rows = (await self.session.execute(type_token_stmt)).all()
+
+        type_token_map: dict[str, dict[str, int]] = {}
+        for r_type, tok, cnt in type_token_rows:
+            if not r_type:
+                continue
+            entry = type_token_map.setdefault(r_type, {"tokens": 0, "count": 0})
+            entry["tokens"] += int(tok or 0)
+            entry["count"] += int(cnt or 0)
+
+        if ra_tot > 0 or ra_runs > 0:
+            entry = type_token_map.setdefault("research_assistant", {"tokens": 0, "count": 0})
+            entry["tokens"] += ra_tot
+            entry["count"] += ra_runs
+
+        total_type_tokens = sum(e["tokens"] for e in type_token_map.values()) or grand_total_tokens
+
+        run_types_breakdown: list[RunTypeMetricItem] = []
+        for r_type, stats in sorted(type_token_map.items(), key=lambda x: x[1]["tokens"], reverse=True):
+            cfg = RUN_TYPE_CONFIG.get(r_type, {"name_zh": r_type, "icon": "fa-solid fa-layer-group"})
+            pct = round((stats["tokens"] / total_type_tokens) * 100.0, 1)
+            run_types_breakdown.append(
+                RunTypeMetricItem(
+                    run_type=r_type,
+                    name_zh=cfg["name_zh"],
+                    count=stats["count"],
+                    total_tokens=stats["tokens"],
+                    percentage=pct,
+                    icon=cfg["icon"],
+                )
+            )
+
+        return TokenScopeMetrics(
+            total_tokens=int(total_tok),
+            prompt_tokens=int(total_in),
+            completion_tokens=int(total_out),
+            analysis_runs_count=int(total_runs),
+            models_breakdown=models_breakdown,
+            runs_by_type=runs_by_type,
+            runs_by_feature=runs_by_feature,
+            run_types_breakdown=run_types_breakdown,
+            success_rate=succ_rate,
+        )
 
     async def get_operational_overview(self, period: str = "7d") -> OperationalOverview:
         """
@@ -128,7 +363,7 @@ class ReportGenerator:
         Includes message volume, daily averages, topics, insights, research queries,
         token usage, and daily trend time-series.
         """
-        curr_start, curr_end, prev_start, prev_end, _, days_count = await self._resolve_period_dates(period)
+        curr_start, curr_end, prev_start, prev_end, _, days_count, comparison_label = await self._resolve_period_dates(period)
 
         # 1. Messages metrics
         is_all = period in ("all", "all_time")
@@ -157,23 +392,54 @@ class ReportGenerator:
             ep_filter = True
             prev_ep_filter = True
             topic_filter = True
+            prev_topic_filter = True
         else:
             ep_filter = Episode.started_at.between(curr_start, curr_end)
             prev_ep_filter = Episode.started_at.between(prev_start, prev_end)
-            topic_filter = Topic.created_at.between(curr_start, curr_end)
+            topic_filter = or_(
+                Topic.created_at.between(curr_start, curr_end),
+                Topic.last_seen_at.between(curr_start, curr_end),
+            )
+            prev_topic_filter = or_(
+                Topic.created_at.between(prev_start, prev_end),
+                Topic.last_seen_at.between(prev_start, prev_end),
+            )
 
-        total_eps = (await self.session.execute(select(func.count(Episode.id)).where(ep_filter))).scalar() or 0
-        prev_eps = (await self.session.execute(select(func.count(Episode.id)).where(prev_ep_filter))).scalar() or 0
+        curr_eps_stmt = select(Episode).where(ep_filter)
+        curr_episodes = (await self.session.execute(curr_eps_stmt)).scalars().all()
+        total_eps = len(curr_episodes)
 
-        total_topics = (await self.session.execute(select(func.count(Topic.id)).where(topic_filter))).scalar() or 0
-        # If topics table has fewer records in time window, count unique topics in DB
-        if total_topics == 0:
-            total_topics = (await self.session.execute(select(func.count(Topic.id)))).scalar() or 0
+        has_episodes_in_db = (await self.session.execute(select(Episode))).scalars().first() is not None
+        if curr_episodes:
+            curr_views = _episodes_to_views(curr_episodes)
+            curr_clusters = EpisodeDeduplicator.deduplicate_episodes(curr_views)
+            total_topics = len(curr_clusters)
+        elif not has_episodes_in_db:
+            total_topics = (await self.session.execute(select(func.count(Topic.id)).where(topic_filter))).scalar() or 0
+        else:
+            total_topics = 0
+
+        if not is_all:
+            prev_eps_stmt = select(Episode).where(prev_ep_filter)
+            prev_episodes = (await self.session.execute(prev_eps_stmt)).scalars().all()
+            prev_eps = len(prev_episodes)
+            if prev_episodes:
+                prev_views = _episodes_to_views(prev_episodes)
+                prev_clusters = EpisodeDeduplicator.deduplicate_episodes(prev_views)
+                prev_topics = len(prev_clusters)
+            elif not has_episodes_in_db:
+                prev_topics = (await self.session.execute(select(func.count(Topic.id)).where(prev_topic_filter))).scalar() or 0
+            else:
+                prev_topics = 0
+        else:
+            prev_eps = total_eps
+            prev_topics = total_topics
 
         # 3. Insights metrics
         if is_all:
             ins_stmt = select(func.count(Insight.id))
             prev_ins_stmt = select(func.count(Insight.id))
+            push_stmt = select(func.count(InsightPushRecord.id)).where(InsightPushRecord.state == "success")
         else:
             ins_stmt = (
                 select(func.count(Insight.id))
@@ -185,8 +451,15 @@ class ReportGenerator:
                 .outerjoin(Episode, Insight.episode_id == Episode.id)
                 .where(Episode.started_at.between(prev_start, prev_end))
             )
+            push_stmt = select(func.count(InsightPushRecord.id)).where(
+                and_(
+                    InsightPushRecord.created_at.between(curr_start, curr_end),
+                    InsightPushRecord.state == "success",
+                )
+            )
         total_insights = (await self.session.execute(ins_stmt)).scalar() or 0
         prev_insights = (await self.session.execute(prev_ins_stmt)).scalar() or 0
+        total_pushed_insights = (await self.session.execute(push_stmt)).scalar() or 0
 
         # Fallback if episode join yielded 0 due to timestamp decoupling
         if total_insights == 0 and is_all:
@@ -204,69 +477,43 @@ class ReportGenerator:
             total_queries = (await self.session.execute(select(func.count(ResearchQueryRecord.id)))).scalar() or 0
 
         # 5. Token Usage & LLM Observability
-        tok_stmt = select(
-            func.sum(AnalysisRun.total_tokens),
-            func.sum(AnalysisRun.input_tokens),
-            func.sum(AnalysisRun.output_tokens),
-            func.count(AnalysisRun.id),
+        # LLM token telemetry is platform real-time infrastructure compute:
+        # - Hourly scope: strictly today 24 hours (today_start to today_end)
+        # - Daily scope: strictly the last 7 days (today - 6 days to today)
+        now_dt = datetime.now()
+        today_date = now_dt.date()
+        today_start = datetime.combine(today_date, dt_time.min)
+        today_end = datetime.combine(today_date, dt_time.max)
+
+        seven_days_start = datetime.combine(today_date - timedelta(days=6), dt_time.min)
+        seven_days_end = datetime.combine(today_date, dt_time.max)
+
+        # Active model name
+        try:
+            from packages.model_gateway.settings_manager import SettingsManager
+            cfg = SettingsManager.get_settings()
+            active_model = cfg.segmentation.model or cfg.default_model or "qwen3.8-flash"
+        except Exception:
+            active_model = "qwen3.8-flash"
+
+        # Calculate daily_scope strictly for the last 7 days (7d)
+        daily_scope = await self._aggregate_token_scope(
+            start_dt=seven_days_start,
+            end_dt=seven_days_end,
+            is_all=False,
+            active_model=active_model,
         )
-        if not is_all:
-            tok_stmt = tok_stmt.where(AnalysisRun.started_at.between(curr_start, curr_end))
 
-        t_res = (await self.session.execute(tok_stmt)).first()
-        t_tot, t_in, t_out, t_runs = (t_res[0] or 0, t_res[1] or 0, t_res[2] or 0, t_res[3] or 0) if t_res else (0, 0, 0, 0)
-
-        # Include Research Assistant query records in token observability
-        ra_tok_stmt = select(
-            func.sum(ResearchQueryRecord.total_tokens),
-            func.sum(ResearchQueryRecord.prompt_tokens),
-            func.sum(ResearchQueryRecord.completion_tokens),
-            func.count(ResearchQueryRecord.id),
+        # Calculate hourly_scope strictly for today 24 hours
+        hourly_scope = await self._aggregate_token_scope(
+            start_dt=today_start,
+            end_dt=today_end,
+            is_all=False,
+            active_model=active_model,
         )
-        if not is_all:
-            ra_tok_stmt = ra_tok_stmt.where(ResearchQueryRecord.created_at.between(curr_start, curr_end))
-        ra_tok_res = (await self.session.execute(ra_tok_stmt)).first()
-        ra_tot = int(ra_tok_res[0] or 0) if ra_tok_res else 0
-        ra_in = int(ra_tok_res[1] or 0) if ra_tok_res else 0
-        ra_out = int(ra_tok_res[2] or 0) if ra_tok_res else 0
-        ra_runs = int(ra_tok_res[3] or 0) if ra_tok_res else 0
 
-        t_tot += ra_tot
-        t_in += ra_in
-        t_out += ra_out
-        t_runs += ra_runs
-
-        # If window had 0 runs, grab platform totals so metrics remain useful
-        if t_runs == 0:
-            fallback_tok = (await self.session.execute(
-                select(
-                    func.sum(AnalysisRun.total_tokens),
-                    func.sum(AnalysisRun.input_tokens),
-                    func.sum(AnalysisRun.output_tokens),
-                    func.count(AnalysisRun.id),
-                )
-            )).first()
-            if fallback_tok:
-                t_tot, t_in, t_out, t_runs = (
-                    fallback_tok[0] or 0,
-                    fallback_tok[1] or 0,
-                    fallback_tok[2] or 0,
-                    fallback_tok[3] or 0,
-                )
-
-        # Runs breakdown by run_type and simplified Chinese feature names
-        runs_by_type_rows = (await self.session.execute(
-            select(AnalysisRun.run_type, func.count(AnalysisRun.id)).group_by(AnalysisRun.run_type)
-        )).all()
-        runs_by_type = {row[0]: int(row[1]) for row in runs_by_type_rows}
-        if ra_runs > 0:
-            runs_by_type["research_assistant"] = runs_by_type.get("research_assistant", 0) + ra_runs
-
-        runs_by_feature = {
-            FEATURE_NAME_MAP.get(k, k): v for k, v in runs_by_type.items()
-        }
-
-        # Calculate actual average duration and tokens per second from recent succeeded runs
+        # Real-time token output speed & latency from latest succeeded requests
+        # (Independent of hourly/daily toggle)
         recent_runs_stmt = (
             select(AnalysisRun)
             .where(AnalysisRun.state == "succeeded")
@@ -286,7 +533,6 @@ class ReportGenerator:
                     calc_dur_sec += sec
                     calc_out_tokens += (r.output_tokens or 0)
 
-        # Filter out instant/mock durations (< 100ms) for realistic online telemetry
         real_dur_sec = sum(sec for sec in [d / 1000.0 for d in calc_durations] if sec >= 0.1)
         real_dur_ms = [d for d in calc_durations if d >= 100.0]
         avg_dur = round(sum(real_dur_ms) / len(real_dur_ms), 1) if real_dur_ms else 1850.0
@@ -298,101 +544,107 @@ class ReportGenerator:
         else:
             tps = 0.0
 
-        # Success rate
-        total_runs_cnt = (await self.session.execute(select(func.count(AnalysisRun.id)))).scalar() or 0
-        failed_runs_cnt = (await self.session.execute(select(func.count(AnalysisRun.id)).where(AnalysisRun.state == "failed"))).scalar() or 0
-        succ_rate = round(((total_runs_cnt - failed_runs_cnt) / max(total_runs_cnt, 1)) * 100.0, 1)
-
-        # Active model name
-        try:
-            from packages.model_gateway.settings_manager import SettingsManager
-            cfg = SettingsManager.get_settings()
-            active_model = cfg.segmentation.model or cfg.default_model or "qwen3.8-flash"
-        except Exception:
-            active_model = "qwen3.8-flash"
-
-        # Model-level detailed token usage breakdown
-        model_run_stmt = select(
-            AnalysisRun.model,
-            func.sum(AnalysisRun.total_tokens),
-            func.sum(AnalysisRun.input_tokens),
-            func.sum(AnalysisRun.output_tokens),
-            func.count(AnalysisRun.id),
-        ).group_by(AnalysisRun.model)
-        if not is_all:
-            model_run_stmt = model_run_stmt.where(AnalysisRun.started_at.between(curr_start, curr_end))
-        model_run_rows = (await self.session.execute(model_run_stmt)).all()
-
-        ra_model_stmt = select(
-            ResearchQueryRecord.model_used,
-            func.sum(ResearchQueryRecord.total_tokens),
-            func.sum(ResearchQueryRecord.prompt_tokens),
-            func.sum(ResearchQueryRecord.completion_tokens),
-            func.count(ResearchQueryRecord.id),
-        ).group_by(ResearchQueryRecord.model_used)
-        if not is_all:
-            ra_model_stmt = ra_model_stmt.where(ResearchQueryRecord.created_at.between(curr_start, curr_end))
-        ra_model_rows = (await self.session.execute(ra_model_stmt)).all()
-
-        model_map: dict[str, dict[str, int]] = {}
-        for m_name, tot, p_in, p_out, cnt in model_run_rows:
-            if not m_name:
-                continue
-            entry = model_map.setdefault(m_name, {"total": 0, "prompt": 0, "completion": 0, "calls": 0})
-            entry["total"] += int(tot or 0)
-            entry["prompt"] += int(p_in or 0)
-            entry["completion"] += int(p_out or 0)
-            entry["calls"] += int(cnt or 0)
-
-        for m_name, tot, p_in, p_out, cnt in ra_model_rows:
-            if not m_name:
-                continue
-            clean_name = m_name if m_name != "system-direct" else "System Direct (零召回)"
-            entry = model_map.setdefault(clean_name, {"total": 0, "prompt": 0, "completion": 0, "calls": 0})
-            entry["total"] += int(tot or 0)
-            entry["prompt"] += int(p_in or 0)
-            entry["completion"] += int(p_out or 0)
-            entry["calls"] += int(cnt or 0)
-
-        if not model_map and active_model:
-            model_map[active_model] = {
-                "total": int(t_tot),
-                "prompt": int(t_in),
-                "completion": int(t_out),
-                "calls": int(t_runs),
-            }
-
-        grand_total_tokens = sum(e["total"] for e in model_map.values()) or max(int(t_tot), 1)
-
-        models_breakdown: list[ModelTokenUsage] = []
-        for m_name, stats_dict in sorted(model_map.items(), key=lambda x: x[1]["total"], reverse=True):
-            pct = round((stats_dict["total"] / grand_total_tokens) * 100.0, 1)
-            models_breakdown.append(
-                ModelTokenUsage(
-                    model_name=m_name,
-                    total_tokens=stats_dict["total"],
-                    prompt_tokens=stats_dict["prompt"],
-                    completion_tokens=stats_dict["completion"],
-                    call_count=stats_dict["calls"],
-                    percentage=pct,
-                )
+        # Hourly Trend Points (24 hours: 00:00 to 23:00 for today)
+        hourly_map: dict[str, HourlyTrendPoint] = {
+            f"{h:02d}:00": HourlyTrendPoint(hour=f"{h:02d}:00", tokens=0, runs_count=0)
+            for h in range(24)
+        }
+        h_toks = (await self.session.execute(
+            select(
+                func.strftime("%H", AnalysisRun.started_at),
+                func.sum(AnalysisRun.total_tokens),
+                func.count(AnalysisRun.id),
             )
+            .where(AnalysisRun.started_at.between(today_start, today_end))
+            .group_by(func.strftime("%H", AnalysisRun.started_at))
+        )).all()
+        for h_str, tok_sum, cnt in h_toks:
+            if h_str is not None:
+                slot_key = f"{int(h_str):02d}:00"
+                if slot_key in hourly_map:
+                    hourly_map[slot_key].tokens += int(tok_sum or 0)
+                    hourly_map[slot_key].runs_count += int(cnt or 0)
+
+        h_ra_toks = (await self.session.execute(
+            select(
+                func.strftime("%H", ResearchQueryRecord.created_at),
+                func.sum(ResearchQueryRecord.total_tokens),
+                func.count(ResearchQueryRecord.id),
+            )
+            .where(ResearchQueryRecord.created_at.between(today_start, today_end))
+            .group_by(func.strftime("%H", ResearchQueryRecord.created_at))
+        )).all()
+        for h_str, tok_sum, cnt in h_ra_toks:
+            if h_str is not None:
+                slot_key = f"{int(h_str):02d}:00"
+                if slot_key in hourly_map:
+                    hourly_map[slot_key].tokens += int(tok_sum or 0)
+                    hourly_map[slot_key].runs_count += int(cnt or 0)
+
+        token_hourly_trend = [hourly_map[f"{h:02d}:00"] for h in range(24)]
+
+        # Daily Trend Points (Strictly last 7 days: today - 6 days to today)
+        trend_start_date = today_date - timedelta(days=6)
+        trend_end_date = today_date
+        token_daily_trend_map: dict[str, TokenTrendPoint] = {}
+        day_cursor = trend_start_date
+        while day_cursor <= trend_end_date:
+            d_str = day_cursor.strftime("%Y-%m-%d")
+            token_daily_trend_map[d_str] = TokenTrendPoint(date=d_str, tokens=0, runs_count=0)
+            day_cursor += timedelta(days=1)
+
+        d_toks = (await self.session.execute(
+            select(
+                func.date(AnalysisRun.started_at),
+                func.sum(AnalysisRun.total_tokens),
+                func.count(AnalysisRun.id),
+            )
+            .where(AnalysisRun.started_at.between(seven_days_start, seven_days_end))
+            .group_by(func.date(AnalysisRun.started_at))
+        )).all()
+        for d_val, cnt_tok, cnt_run in d_toks:
+            d_str = str(d_val)
+            if d_str in token_daily_trend_map:
+                token_daily_trend_map[d_str].tokens += int(cnt_tok or 0)
+                token_daily_trend_map[d_str].runs_count += int(cnt_run or 0)
+
+        d_ra_toks = (await self.session.execute(
+            select(
+                func.date(ResearchQueryRecord.created_at),
+                func.sum(ResearchQueryRecord.total_tokens),
+                func.count(ResearchQueryRecord.id),
+            )
+            .where(ResearchQueryRecord.created_at.between(seven_days_start, seven_days_end))
+            .group_by(func.date(ResearchQueryRecord.created_at))
+        )).all()
+        for d_val, cnt_tok, cnt_run in d_ra_toks:
+            d_str = str(d_val)
+            if d_str in token_daily_trend_map:
+                token_daily_trend_map[d_str].tokens += int(cnt_tok or 0)
+                token_daily_trend_map[d_str].runs_count += int(cnt_run or 0)
+
+        token_daily_trend = list(token_daily_trend_map.values())
 
         token_metrics = TokenUsageMetrics(
-            total_tokens=int(t_tot),
-            prompt_tokens=int(t_in),
-            completion_tokens=int(t_out),
-            analysis_runs_count=int(t_runs),
-            runs_by_type=runs_by_type,
-            runs_by_feature=runs_by_feature,
-            models_breakdown=models_breakdown,
+            total_tokens=daily_scope.total_tokens,
+            prompt_tokens=daily_scope.prompt_tokens,
+            completion_tokens=daily_scope.completion_tokens,
+            analysis_runs_count=daily_scope.analysis_runs_count,
+            runs_by_type=daily_scope.runs_by_type,
+            runs_by_feature=daily_scope.runs_by_feature,
+            run_types_breakdown=daily_scope.run_types_breakdown,
+            models_breakdown=daily_scope.models_breakdown,
+            hourly_scope=hourly_scope,
+            daily_scope=daily_scope,
+            token_hourly_trend=token_hourly_trend,
+            token_daily_trend=token_daily_trend,
             avg_duration_ms=avg_dur,
             tokens_per_second=tps,
             active_model=active_model,
-            success_rate=succ_rate,
+            success_rate=daily_scope.success_rate,
         )
 
-        # 6. Period Comparisons (Growth %)
+        # 8. Period Comparisons (Growth %)
         def _calc_growth(curr: int, prev: int) -> Optional[float]:
             if prev <= 0:
                 return 100.0 if curr > 0 else 0.0
@@ -401,19 +653,21 @@ class ReportGenerator:
         comparison = PeriodComparison(
             messages_growth_pct=_calc_growth(total_msgs, prev_msgs) if not is_all else None,
             episodes_growth_pct=_calc_growth(total_eps, prev_eps) if not is_all else None,
+            topics_growth_pct=_calc_growth(total_topics, prev_topics) if not is_all else None,
             insights_growth_pct=_calc_growth(total_insights, prev_insights) if not is_all else None,
+            comparison_label=comparison_label,
+            comparison_start_date=prev_start.strftime("%Y-%m-%d"),
+            comparison_end_date=prev_end.strftime("%Y-%m-%d"),
         )
 
-        # 7. Daily Trends Series
+        # 9. Daily Trends Series
         daily_trend_map: dict[str, DailyTrendPoint] = {}
-        # Pre-seed days
         day_cursor = curr_start.date()
         while day_cursor <= curr_end.date():
             d_str = day_cursor.strftime("%Y-%m-%d")
             daily_trend_map[d_str] = DailyTrendPoint(date=d_str)
             day_cursor += timedelta(days=1)
 
-        # Populate message counts
         d_msgs = (await self.session.execute(
             select(func.date(Message.sent_at), func.count(Message.id))
             .where(msg_filter)
@@ -423,7 +677,6 @@ class ReportGenerator:
             if str(d_val) in daily_trend_map:
                 daily_trend_map[str(d_val)].message_count = cnt
 
-        # Populate episode counts
         d_eps = (await self.session.execute(
             select(func.date(Episode.started_at), func.count(Episode.id))
             .where(ep_filter)
@@ -433,40 +686,10 @@ class ReportGenerator:
             if str(d_val) in daily_trend_map:
                 daily_trend_map[str(d_val)].episode_count = cnt
 
-        # Populate daily token counts
-        d_toks = (await self.session.execute(
-            select(func.date(AnalysisRun.started_at), func.sum(AnalysisRun.total_tokens))
-            .where(AnalysisRun.started_at.between(curr_start, curr_end) if not is_all else True)
-            .group_by(func.date(AnalysisRun.started_at))
-        )).all()
-        for d_val, cnt in d_toks:
-            if str(d_val) in daily_trend_map:
-                daily_trend_map[str(d_val)].token_count += int(cnt or 0)
-
-        d_ra_toks = (await self.session.execute(
-            select(func.date(ResearchQueryRecord.created_at), func.sum(ResearchQueryRecord.total_tokens))
-            .where(ResearchQueryRecord.created_at.between(curr_start, curr_end) if not is_all else True)
-            .group_by(func.date(ResearchQueryRecord.created_at))
-        )).all()
-        for d_val, cnt in d_ra_toks:
-            if str(d_val) in daily_trend_map:
-                daily_trend_map[str(d_val)].token_count += int(cnt or 0)
-
-        # If daily_trend_map collected 0 tokens due to chat message dates differing from recent execution run dates,
-        # project recent actual LLM run tokens onto the trend window so sparkline accurately displays model activity
-        total_tok_in_trend = sum(d.token_count for d in daily_trend_map.values())
-        if total_tok_in_trend == 0 and t_tot > 0:
-            all_tok_rows = (await self.session.execute(
-                select(func.date(AnalysisRun.started_at), func.sum(AnalysisRun.total_tokens))
-                .group_by(func.date(AnalysisRun.started_at))
-                .order_by(func.date(AnalysisRun.started_at).asc())
-            )).all()
-            all_tok_list = [int(r[1] or 0) for r in all_tok_rows if r[1]]
-            if all_tok_list:
-                trend_keys = sorted(daily_trend_map.keys())
-                tail_keys = trend_keys[-len(all_tok_list):] if len(all_tok_list) <= len(trend_keys) else trend_keys
-                for k, tok_val in zip(tail_keys, all_tok_list[-len(tail_keys):]):
-                    daily_trend_map[k].token_count = tok_val
+        for d_point in token_daily_trend:
+            if d_point.date in daily_trend_map:
+                daily_trend_map[d_point.date].token_count = d_point.tokens
+                daily_trend_map[d_point.date].runs_count = d_point.runs_count
 
         daily_trends = sorted(daily_trend_map.values(), key=lambda x: x.date)
 
@@ -476,13 +699,20 @@ class ReportGenerator:
             sign = "+" if comparison.messages_growth_pct >= 0 else ""
             msg_comp_txt = f"（环比{sign}{comparison.messages_growth_pct}%）"
 
-        brief_summary = (
-            f"平台在统计周期（{curr_start.strftime('%Y-%m-%d')} 至 {curr_end.strftime('%Y-%m-%d')}）内累计高效处理社群消息 "
-            f"{total_msgs:,} 条{msg_comp_txt}，日均吞吐 {daily_avg_msgs:,} 条，涉及 {total_convs} 个微信群与 {total_active_users} 名活跃用户；"
-            f"切分聚类产出 {total_eps} 个原始话题片段与 {total_insights} 项结构化需求洞察，"
-            f"智能研究助手被调用 {total_queries} 次。大模型算力累计消耗 {t_tot:,} Tokens（Prompt: {t_in:,} / Completion: {t_out:,}），"
-            f"运行流水线整体保持健康低延迟。"
-        )
+        if total_msgs == 0:
+            brief_summary = (
+                f"平台在统计周期（{curr_start.strftime('%Y-%m-%d')} 至 {curr_end.strftime('%Y-%m-%d')}）内社群流水线运行平稳，"
+                f"当前周期内暂无新接入的社群原始消息与切片，智能研究助手被调用 {total_queries} 次，"
+                f"大模型算力消耗 {token_metrics.total_tokens:,} Tokens，系统各模块运行健康。"
+            )
+        else:
+            brief_summary = (
+                f"平台在统计周期（{curr_start.strftime('%Y-%m-%d')} 至 {curr_end.strftime('%Y-%m-%d')}）内累计高效处理社群消息 "
+                f"{total_msgs:,} 条{msg_comp_txt}，日均吞吐 {daily_avg_msgs:,} 条，涉及 {total_convs} 个微信群与 {total_active_users} 名活跃用户；"
+                f"切分聚类产出 {total_eps} 个原始话题片段与 {total_insights} 项结构化需求洞察，"
+                f"智能研究助手被调用 {total_queries} 次。大模型算力累计消耗 {token_metrics.total_tokens:,} Tokens（Prompt: {token_metrics.prompt_tokens:,} / Completion: {token_metrics.completion_tokens:,}），"
+                f"运行流水线整体保持健康低延迟。"
+            )
 
         return OperationalOverview(
             period=period,
@@ -496,6 +726,7 @@ class ReportGenerator:
             total_episodes=total_eps,
             total_topics=total_topics,
             total_insights=total_insights,
+            total_pushed_insights=total_pushed_insights,
             total_research_queries=total_queries,
             token_usage=token_metrics,
             comparison=comparison,
@@ -714,21 +945,60 @@ class ReportGenerator:
         return quotes, ep_id
 
     @staticmethod
+    def _is_chit_chat_topic(title: str) -> bool:
+        for pat in (
+            "开箱视频", "点赞", "求求", "来首", "求曲", "求歌",
+            "日常问候", "红包", "打卡", "闲聊", "淘宝", "VIP",
+            "选购及卓乐", "那必须换呀", "气氛调控", "曲目选择",
+            "好幸福的工作", "琴友日常问候", "社群日常问候", "社群综合交流",
+            "大喊", "我爱", "哈哈哈", "弹十遍"
+        ):
+            if pat in title:
+                return True
+        return False
+
+    @staticmethod
+    def _normalize_category_main(raw_cat: str) -> str:
+        if not raw_cat:
+            return "综合交流"
+        clean = raw_cat.split("·")[0].strip()
+        norm_map = {
+            "硬件与外设": "硬件做工与外设",
+            "硬件做工": "硬件做工与外设",
+            "蓝牙与无线": "蓝牙与无线连接",
+            "弹唱与走带": "弹唱与走带体验",
+            "固件与电源": "固件与电源管理",
+            "固件系统": "固件与电源管理",
+            "物流售后": "物流与售后",
+            "软件与App": "软件与App生态",
+            "设备与兼容": "设备与系统兼容性",
+        }
+        return norm_map.get(clean, clean)
+
+    @staticmethod
     def _deduce_topic_action(title: str, module: str) -> str:
-        if any(k in title for k in ("主题", "黑白", "字体", "看不清", "颜色")):
+        if any(k in title for k in ("主题", "黑白", "字体", "看不清", "颜色", "底色")):
             return "建议在 App 设置中提供高对比度浅色/黑白模式切换，并增大曲谱与操作界面字体粗细，提升中老年与户外场景易读性。"
-        elif any(k in title for k in ("固件", "升级", "更新")):
+        elif any(k in title for k in ("制谱", "风格包", "保存失效", "调子", "乱", "丢失", "和弦")):
+            return "建议重点排查 AI 制谱后的参数持久化时序与草稿保存机制，增加谱面修改未保存告警并优化和弦容错检测。"
+        elif any(k in title for k in ("领唱", "旋律", "乐库", "导入", "曲库", "格式")):
+            return "建议扩展主流简谱/五线谱/MusicXML/吉他谱文件导入解析能力，并加速补齐乐库高频曲目的旋律领唱与分段示范音频。"
+        elif any(k in title for k in ("固件", "升级", "更新", "死机", "开机")):
             return "建议固件升级链路强化断点续传与超时保护机制，并在 App 增加图文引导，防止在升级关键时序中断失败。"
         elif any(k in title for k in ("插卡", "插槽", "引擎", "扩展卡", "LiberCore")):
             return "建议在硬件插槽增加直观防呆方向标识，并在 App 建立插卡自检诊断页，提供实时联机状态回显与插拔帮助指引。"
-        elif any(k in title for k in ("音色", "掉线", "曲谱", "钢琴")):
-            return "建议增强硬件与 App 间的音色卡实时心跳监测，遇到松动或通信异常时及时告警，避免静默回退默认音色导致用户困惑。"
-        elif any(k in title for k in ("跟弹", "和弦", "原唱", "教学", "小白")):
-            return "建议在曲谱播放页增加原唱开闭开关与和弦图例小窗，并在新手教学模块加入伴奏与旋律关系的入门演示。"
-        elif any(k in title for k in ("蓝牙", "连接", "配对")):
-            return "建议优化蓝牙广播扫描过滤算法，提升 BLE 自动重连成功率，并补充蓝牙连接状态排查指引。"
+        elif any(k in title for k in ("音色", "掉线", "钢琴")):
+            return "建议增强硬件与 App 间的音色卡实时心跳监测，遇到通信异常时及时重试并给出状态弹窗，避免静默回退默认音色。"
+        elif any(k in title for k in ("跟弹", "鼓机", "长按", "关闭", "卡点", "小白")):
+            return "建议在跟弹页面增加明显的鼓机状态指示灯与长按退出悬浮提示，并在新手教学引导中加入节奏模式交互演示。"
+        elif any(k in title for k in ("做工", "公差", "按键", "手感", "拨片", "硬件")):
+            return "建议质量团队针对外壳装配公差与机械按键按压行程展开巡检，收紧产线品控标准并优化拔片回弹阻尼。"
+        elif any(k in title for k in ("录制", "麦克风", "线材", "转接头", "连接")):
+            return "建议在官方商城与帮助中心上架官方推荐的低延迟音频转接头与 OTG 转录连接配件指南，明确支持线型。"
+        elif any(k in title for k in ("蓝牙", "配对", "广播")):
+            return "建议优化蓝牙广播扫描过滤算法，提升 BLE 自动重连成功率，并在连接失败时提供针对性引导提示。"
         else:
-            return "建议产研团队对该聚集问题展开针对性跟进，完善帮助指引文档并纳入版本敏捷迭代规划。"
+            return "建议产研团队对该聚集问题展开针对性跟进，排查边界链路容错，并在后续版本敏捷迭代中持续优化。"
 
     async def get_high_value_content(
         self,
@@ -743,13 +1013,15 @@ class ReportGenerator:
         - Critical/Blocker actionable insights with 5W1H and verbatim user voice
         - Optional AI Executive Strategic Briefing
         """
-        curr_start, curr_end, prev_start, prev_end, _, _ = await self._resolve_period_dates(period)
+        curr_start, curr_end, prev_start, prev_end, _, _, _ = await self._resolve_period_dates(period)
         is_all = period in ("all", "all_time")
 
-        # 1. Fetch Insights in period (or all)
+        # 1. Fetch Insights and Episodes in period (or all)
         if is_all:
             ins_q = select(Insight)
             prev_ins_q = select(Insight)
+            ep_stmt = select(Episode)
+            prev_ep_stmt = select(Episode)
         else:
             ins_q = (
                 select(Insight)
@@ -761,50 +1033,81 @@ class ReportGenerator:
                 .outerjoin(Episode, Insight.episode_id == Episode.id)
                 .where(Episode.started_at.between(prev_start, prev_end))
             )
+            ep_stmt = select(Episode).where(Episode.started_at.between(curr_start, curr_end))
+            prev_ep_stmt = select(Episode).where(Episode.started_at.between(prev_start, prev_end))
 
         curr_insights = (await self.session.execute(ins_q)).scalars().all()
-        if not curr_insights:
-            curr_insights = (await self.session.execute(select(Insight))).scalars().all()
         prev_insights = (await self.session.execute(prev_ins_q)).scalars().all()
+        period_episodes = (await self.session.execute(ep_stmt)).scalars().all()
+        prev_episodes = (await self.session.execute(prev_ep_stmt)).scalars().all() if not is_all else period_episodes
 
-        # 2. Fetch Topics in period
-        topics = (await self.session.execute(select(Topic).order_by(desc(Topic.feedback_count)))).scalars().all()
+        # Fallback to all insights only if the database has no episodes at all (e.g. pure Insight mock unit tests)
+        if not curr_insights:
+            has_episodes = (await self.session.execute(select(Episode))).scalars().first() is not None
+            if not has_episodes or is_all:
+                curr_insights = (await self.session.execute(select(Insight))).scalars().all()
 
-        # Fetch representative high-impact episodes to supplement topics
-        ep_q = select(Episode).order_by(desc(Episode.message_count)).limit(15)
-        top_episodes = (await self.session.execute(ep_q)).scalars().all()
+        # 2. Clustered Topics generation for the period
+        curr_clusters: list[Any] = []
+        if period_episodes:
+            ep_views = _episodes_to_views(period_episodes)
+            curr_clusters = EpisodeDeduplicator.deduplicate_episodes(ep_views, sort_by="frequency")
 
+        prev_clusters: list[Any] = []
+        if prev_episodes and not is_all:
+            prev_views = _episodes_to_views(prev_episodes)
+            prev_clusters = EpisodeDeduplicator.deduplicate_episodes(prev_views, sort_by="frequency")
         # 3. Category Dynamics (10 core modules + WoW alert)
-        curr_cat_counts: dict[str, int] = {}
-        curr_sub_counts: dict[str, dict[str, int]] = {}
+        curr_ins_counts: dict[str, int] = defaultdict(int)
+        curr_sub_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         for ins in curr_insights:
-            mod_main = ins.module.split("·")[0].strip() if ins.module else "综合体验"
+            mod_main = self._normalize_category_main(ins.module)
             sub_mod = ins.module.split("·")[-1].strip() if "·" in (ins.module or "") else (ins.sub_module or "常规反馈")
-            curr_cat_counts[mod_main] = curr_cat_counts.get(mod_main, 0) + 1
-            if mod_main not in curr_sub_counts:
-                curr_sub_counts[mod_main] = {}
-            curr_sub_counts[mod_main][sub_mod] = curr_sub_counts[mod_main].get(sub_mod, 0) + 1
+            curr_ins_counts[mod_main] += 1
+            curr_sub_counts[mod_main][sub_mod] += 1
 
-        prev_cat_counts: dict[str, int] = {}
+        prev_ins_counts: dict[str, int] = defaultdict(int)
         for ins in prev_insights:
-            mod_main = ins.module.split("·")[0].strip() if ins.module else "综合体验"
-            prev_cat_counts[mod_main] = prev_cat_counts.get(mod_main, 0) + 1
+            mod_main = self._normalize_category_main(ins.module)
+            prev_ins_counts[mod_main] += 1
+
+        curr_topic_cat_counts: dict[str, int] = defaultdict(int)
+        for c in curr_clusters:
+            mod_main = self._normalize_category_main(c.l1_tag_zh or c.category_hint)
+            curr_topic_cat_counts[mod_main] += 1
+
+        prev_topic_cat_counts: dict[str, int] = defaultdict(int)
+        for c in prev_clusters:
+            mod_main = self._normalize_category_main(c.l1_tag_zh or c.category_hint)
+            prev_topic_cat_counts[mod_main] += 1
+
+        all_categories = set(curr_ins_counts.keys()) | set(curr_topic_cat_counts.keys())
 
         category_dynamics: list[CategoryDynamicsItem] = []
-        for cat_name, count in sorted(curr_cat_counts.items(), key=lambda x: x[1], reverse=True):
-            p_cnt = prev_cat_counts.get(cat_name, 0)
+        for cat_name in sorted(
+            all_categories,
+            key=lambda x: (curr_topic_cat_counts.get(x, 0) + curr_ins_counts.get(x, 0)),
+            reverse=True,
+        ):
+            t_cnt = curr_topic_cat_counts.get(cat_name, 0)
+            i_cnt = curr_ins_counts.get(cat_name, 0)
+            total_cnt = t_cnt + i_cnt
+            p_t_cnt = prev_topic_cat_counts.get(cat_name, 0)
+            p_i_cnt = prev_ins_counts.get(cat_name, 0)
+            p_cnt = p_t_cnt + p_i_cnt
+
             change_pct: Optional[float] = None
             if not is_all:
                 if p_cnt > 0:
-                    change_pct = round(((count - p_cnt) / p_cnt) * 100.0, 1)
-                elif count > 0:
+                    change_pct = round(((total_cnt - p_cnt) / p_cnt) * 100.0, 1)
+                elif total_cnt > 0:
                     change_pct = 100.0
 
             alert_lvl = "normal"
             if change_pct is not None:
-                if change_pct >= 50.0 and count >= 3:
+                if change_pct >= 50.0 and total_cnt >= 3:
                     alert_lvl = "critical"
-                elif change_pct >= 20.0 and count >= 2:
+                elif change_pct >= 20.0 and total_cnt >= 2:
                     alert_lvl = "warning"
 
             sub_items = [
@@ -816,9 +1119,9 @@ class ReportGenerator:
                 CategoryDynamicsItem(
                     category=cat_name,
                     category_zh=TagManager.format_tag_display(cat_name),
-                    topic_count=count,
-                    insight_count=count,
-                    total_count=count,
+                    topic_count=t_cnt,
+                    insight_count=i_cnt,
+                    total_count=total_cnt,
                     change_pct=change_pct,
                     alert_level=alert_lvl,
                     sub_categories=sub_items,
@@ -826,75 +1129,117 @@ class ReportGenerator:
             )
 
         # 4. Clustered High-Value Topics Highlights
+        ins_by_ep: dict[str, list[Insight]] = defaultdict(list)
+        for ins in curr_insights:
+            if ins.episode_id:
+                ins_by_ep[ins.episode_id].append(ins)
+
         high_value_topics: list[HighValueTopicItem] = []
-        for t in topics:
-            quotes, ep_id = await self._fetch_topic_user_quotes(topic_id=t.id, title=t.title)
-            action = self._deduce_topic_action(t.title, t.module)
-            assoc = ["LiberLive App", "深色模式", "谱面显示"]
-            if "扩展卡" in t.title or "音色" in t.title:
-                assoc = ["LiberLive C2", "扩展卡", "音色引擎"]
-            elif "固件" in t.title or "升级" in t.title:
-                assoc = ["固件升级", "蓝牙传输", "恢复模式"]
 
-            high_value_topics.append(
-                HighValueTopicItem(
-                    topic_id=t.id,
-                    title=t.title,
-                    module=t.module,
-                    module_zh=TagManager.format_tag_display(t.module),
-                    severity=t.severity,
-                    severity_zh={"blocker": "🚨 致命阻塞", "major": "⚠️ 严重故障", "minor": "📌 一般缺陷", "trivial": "🌱 轻微建议"}.get(t.severity, "📌 一般缺陷"),
-                    feedback_count=t.feedback_count,
-                    unique_users=t.unique_users_count,
-                    summary=t.summary,
-                    core_quote=quotes[0] if quotes else None,
-                    user_quotes=quotes,
-                    episode_id=ep_id,
-                    suggested_action=action,
-                    associated_entities=assoc,
+        if curr_clusters:
+            scored_clusters = []
+            for c in curr_clusters:
+                if self._is_chit_chat_topic(c.canonical_title):
+                    continue
+
+                c_ins = []
+                for ep in c.episodes:
+                    c_ins.extend(ins_by_ep.get(ep.id, []))
+
+                if any(i.severity == "blocker" for i in c_ins):
+                    sev = "blocker"
+                elif any(i.severity == "major" for i in c_ins):
+                    sev = "major"
+                elif any(k in c.canonical_title for k in ("退货", "卡死", "无法", "失败", "掉线", "缺失", "闪退", "异常", "报错", "冲突", "错乱", "重置", "没声音", "黑乎乎", "看不清", "不灵", "断")):
+                    sev = "major"
+                else:
+                    sev = "minor"
+
+                sev_weight = {"blocker": 120, "major": 70, "minor": 20, "trivial": 10}.get(sev, 20)
+                freq_score = (c.episode_count * 20) + min(c.total_messages * 2, 80)
+
+                prob_bonus = 0
+                for kw in ("无法", "失败", "缺失", "卡死", "闪退", "掉线", "异常", "报错", "退货", "差", "看不清", "重插", "连接不上", "没声音", "冲突", "建议", "不灵", "断", "失效", "乱"):
+                    if kw in c.canonical_title:
+                        prob_bonus += 35
+
+                score = sev_weight + freq_score + prob_bonus
+                scored_clusters.append((score, sev, c))
+
+            scored_clusters.sort(key=lambda x: x[0], reverse=True)
+
+            for score, sev, c in scored_clusters[:6]:
+                raw_title = c.canonical_title
+                clean_title = raw_title.split("】")[-1].strip() if "】" in raw_title else raw_title
+                module_name = c.category_hint or c.l1_tag_zh or "综合体验"
+                rep_ep_id = c.episodes[0].id if c.episodes else None
+
+                quotes, _ = await self._fetch_topic_user_quotes(episode_id=rep_ep_id, title=clean_title)
+                action = self._deduce_topic_action(clean_title, module_name)
+
+                assoc = ["LiberLive C2", "社群原声", "用户体验"]
+                if "制谱" in clean_title or "风格包" in clean_title or "和弦" in clean_title:
+                    assoc = ["AI制谱", "风格包", "曲谱库", "和弦配置"]
+                elif "扩展卡" in clean_title or "音色" in clean_title or "LiberCore" in clean_title:
+                    assoc = ["LiberLive C2", "扩展卡", "音色引擎"]
+                elif "固件" in clean_title or "升级" in clean_title:
+                    assoc = ["固件升级", "蓝牙传输", "恢复模式"]
+                elif "鼓机" in clean_title or "伴奏" in clean_title or "走带" in clean_title:
+                    assoc = ["跟弹模式", "鼓机节奏", "走带控制"]
+                elif "转接" in clean_title or "麦克风" in clean_title or "外接" in clean_title:
+                    assoc = ["音频外设", "麦克风转接", "低延迟录制"]
+
+                high_value_topics.append(
+                    HighValueTopicItem(
+                        topic_id=c.id,
+                        title=clean_title,
+                        module=module_name,
+                        module_zh=TagManager.format_tag_display(module_name),
+                        severity=sev,
+                        severity_zh={"blocker": "🚨 致命阻塞", "major": "⚠️ 严重故障", "minor": "📌 一般缺陷", "trivial": "🌱 轻微建议"}.get(sev, "📌 一般缺陷"),
+                        feedback_count=c.total_messages,
+                        unique_users=len(c.participants) if c.participants else max(c.episode_count, 1),
+                        summary=c.summary,
+                        core_quote=quotes[0] if quotes else None,
+                        user_quotes=quotes,
+                        episode_id=rep_ep_id,
+                        suggested_action=action,
+                        associated_entities=assoc,
+                    )
                 )
-            )
 
-        # Supplement with high-density episodes if topics are few
-        for ep in top_episodes:
-            if len(high_value_topics) >= 5:
-                break
-            if any(h.title == ep.title for h in high_value_topics):
-                continue
-            cat_display = TagManager.format_tag_display(ep.category_hint or "配置与音色")
-            quotes, ep_id = await self._fetch_topic_user_quotes(episode_id=ep.id, title=ep.title)
-            action = self._deduce_topic_action(ep.title, ep.category_hint or "")
-            # Deduce associated hardware/software keywords
-            assoc = []
-            if "扩展卡" in ep.title or "音色" in ep.title or "LiberCore" in ep.title:
-                assoc.extend(["LiberLive C2", "扩展卡", "音色引擎"])
-            elif "固件" in ep.title or "升级" in ep.title:
-                assoc.extend(["固件升级", "蓝牙传输", "开机时序"])
-            elif "蓝牙" in ep.title or "连接" in ep.title:
-                assoc.extend(["蓝牙扫描", "BLE广播", "重连机制"])
-            elif "和弦" in ep.title or "跟弹" in ep.title or "曲谱" in ep.title:
-                assoc.extend(["曲谱库", "跟弹模式", "新手教学"])
-            else:
-                assoc.extend(["社群高频", "功能体验", "用户原声"])
+        # Fallback to legacy Topic table if no clusters formed ONLY if database has no episodes at all (e.g. pure Topic mock unit tests)
+        if not high_value_topics:
+            has_episodes = (await self.session.execute(select(Episode))).scalars().first() is not None
+            if not has_episodes:
+                topics = (await self.session.execute(select(Topic).order_by(desc(Topic.feedback_count)))).scalars().all()
+                for t in topics:
+                    quotes, ep_id = await self._fetch_topic_user_quotes(topic_id=t.id, title=t.title)
+                    action = self._deduce_topic_action(t.title, t.module)
+                    assoc = ["LiberLive App", "深色模式", "谱面显示"]
+                    if "扩展卡" in t.title or "音色" in t.title:
+                        assoc = ["LiberLive C2", "扩展卡", "音色引擎"]
+                    elif "固件" in t.title or "升级" in t.title:
+                        assoc = ["固件升级", "蓝牙传输", "恢复模式"]
 
-            high_value_topics.append(
-                HighValueTopicItem(
-                    topic_id=ep.id,
-                    title=ep.title,
-                    module=ep.category_hint or "配置与音色",
-                    module_zh=cat_display,
-                    severity="major" if any(k in ep.title for k in ("异常", "失败", "退货", "卡死", "掉线")) else "minor",
-                    severity_zh="⚠️ 严重故障" if any(k in ep.title for k in ("异常", "失败", "退货", "卡死", "掉线")) else "📌 一般缺陷",
-                    feedback_count=max(ep.message_count // 3, 2),
-                    unique_users=len(ep.participants_json) if ep.participants_json else 2,
-                    summary=ep.summary,
-                    core_quote=quotes[0] if quotes else None,
-                    user_quotes=quotes,
-                    episode_id=ep.id,
-                    suggested_action=action,
-                    associated_entities=assoc,
-                )
-            )
+                    high_value_topics.append(
+                        HighValueTopicItem(
+                            topic_id=t.id,
+                            title=t.title,
+                            module=t.module,
+                            module_zh=TagManager.format_tag_display(t.module),
+                            severity=t.severity,
+                            severity_zh={"blocker": "🚨 致命阻塞", "major": "⚠️ 严重故障", "minor": "📌 一般缺陷", "trivial": "🌱 轻微建议"}.get(t.severity, "📌 一般缺陷"),
+                            feedback_count=t.feedback_count,
+                            unique_users=t.unique_users_count,
+                            summary=t.summary,
+                            core_quote=quotes[0] if quotes else None,
+                            user_quotes=quotes,
+                            episode_id=ep_id,
+                            suggested_action=action,
+                            associated_entities=assoc,
+                        )
+                    )
 
         # 5. Critical & Actionable Insights Matrix (Blocker & Major)
         # Fetch claims for verbatim user voice and evidence resolution
@@ -949,9 +1294,9 @@ class ReportGenerator:
                 )
             )
 
-        # 6. RAG Grounded Evidence Highlights for Top Alert Modules
+        # 6. RAG Grounded Evidence Highlights for Top Alert Modules (Only when AI summary is requested)
         rag_highlights: list[dict[str, Any]] = []
-        if self.vector_service:
+        if include_ai_summary and self.vector_service:
             focus_cats = [c for c in category_dynamics if c.alert_level in ("critical", "warning")]
             if not focus_cats and category_dynamics:
                 focus_cats = category_dynamics[:2]
@@ -977,61 +1322,89 @@ class ReportGenerator:
 
         # 7. Strategic Recommendations (Dynamically constructed from critical insights, top categories, and RAG facts)
         recommendations: list[str] = []
-        if critical_insights:
-            top_crit = critical_insights[0]
-            recommendations.append(
-                f"【高危排期】针对【{top_crit.title}】（{top_crit.symptom[:50]}），建议研发团队建立 P1 缺陷建单并发布临时规避指引与修复补丁；"
-            )
-            if len(critical_insights) > 1:
-                sec_crit = critical_insights[1]
+        # 7. Actionable Recommendations (Prioritize Blocker/Major issues + Category Governance)
+        recommendations: list[str] = []
+        if not category_dynamics and not critical_insights and not high_value_topics:
+            recommendations = [
+                "【常规监控】当前统计周期内社群运行平稳，暂无新增高危缺陷与阻断性故障，建议客服与运维保持日常原声监听；",
+                "【宏观复盘】可切换至「近30天」或「全周期」视图，复盘长周期下的高频业务痛点与跨版本体验治理成效；",
+                "【闭环核验】针对前期沉淀的高价值洞察与改进举措持续跟进，核验功能修复后社群用户的实际满意度口碑。",
+            ]
+        else:
+            if critical_insights:
+                top_crit = critical_insights[0]
                 recommendations.append(
-                    f"【质量攻坚】重点排查跟进【{sec_crit.title}】，优化核心功能边界时序与容错恢复；"
+                    f"【高危排期】针对【{top_crit.title}】（{top_crit.symptom[:50]}），建议研发团队建立 P1 缺陷建单并发布临时规避指引与修复补丁；"
+                )
+                if len(critical_insights) > 1:
+                    sec_crit = critical_insights[1]
+                    recommendations.append(
+                        f"【质量攻坚】重点排查跟进【{sec_crit.title}】，优化核心功能边界时序与容错恢复；"
+                    )
+
+            if category_dynamics:
+                top_cat = category_dynamics[0]
+                recommendations.append(
+                    f"【体验治理】针对【{top_cat.category_zh}】模块高频反馈（本期共 {top_cat.total_count} 条），强化场景预期管理并在 App 对应交互界面补齐详尽指引；"
                 )
 
-        if category_dynamics:
-            top_cat = category_dynamics[0]
             recommendations.append(
-                f"【体验治理】针对【{top_cat.category_zh}】模块高频反馈（本期共 {top_cat.total_count} 条），强化场景预期管理并在 App 对应交互界面补齐详尽指引；"
+                "【运营闭环】对社群内表达退货诉求或困惑的用户实施主动关怀回访，持续跟踪版本修复后的用户满意度变动。"
             )
 
-        recommendations.append(
-            "【运营闭环】对社群内表达退货诉求或困惑的用户实施主动关怀回访，持续跟踪版本修复后的用户满意度变动。"
-        )
+            # Supplement with high-value topic actions and proactive initiatives to guarantee at least 3 high-impact recommendations
+            for hvt in high_value_topics:
+                if len(recommendations) >= 3:
+                    break
+                action_text = hvt.suggested_action or "深入梳理业务操作链路并提供明确容错指引与状态反馈。"
+                rec_entry = f"【专项改进】围绕【{hvt.title}】：{action_text}"
+                if rec_entry not in recommendations:
+                    recommendations.append(rec_entry)
 
-        # Supplement with high-value topic actions and proactive initiatives to guarantee at least 3 high-impact recommendations
-        for hvt in high_value_topics:
-            if len(recommendations) >= 3:
-                break
-            action_text = hvt.suggested_action or "深入梳理业务操作链路并提供明确容错指引与状态反馈。"
-            rec_entry = f"【专项改进】围绕【{hvt.title}】：{action_text}"
-            if rec_entry not in recommendations:
-                recommendations.append(rec_entry)
-
-        default_fallbacks = [
-            "【研发排期】梳理周期内高频出现的软硬件交互边界时序与容错恢复机制，建立专项缺陷跟进与回归测试验证集。",
-            "【产品体验】强化新特性与复杂操作链路的在端提示与帮助文档，在核心功能入口增加自检与诊断指引。",
-        ]
-        for dfb in default_fallbacks:
-            if len(recommendations) >= 3:
-                break
-            if dfb not in recommendations:
-                recommendations.append(dfb)
+            default_fallbacks = [
+                "【研发排期】梳理周期内高频出现的软硬件交互边界时序与容错恢复机制，建立专项缺陷跟进与回归测试验证集。",
+                "【产品体验】强化新特性与复杂操作链路的在端提示与帮助文档，在核心功能入口增加自检与诊断指引。",
+            ]
+            for dfb in default_fallbacks:
+                if len(recommendations) >= 3:
+                    break
+                if dfb not in recommendations:
+                    recommendations.append(dfb)
 
         # 8. AI Executive Summary (Optional or deterministic)
         ai_summary: Optional[str] = None
-        if include_ai_summary and not force_mock:
+        period_name_map = {
+            "today": "今日实时",
+            "1d": "今日实时",
+            "7d": "近7天周度",
+            "week": "近7天周度",
+            "30d": "近30天月度",
+            "month": "近30天月度",
+            "all": "全周期综合",
+            "all_time": "全周期综合",
+        }
+        p_name = period_name_map.get((period or "7d").lower(), "当前统计周期")
+
+        if not category_dynamics and not critical_insights and not high_value_topics:
+            ai_summary = (
+                f"在【{p_name}】内，社群流水线运行平稳，当前统计周期内暂无新增社群消息或突发异常上报。"
+                f"系统未检出阻断性缺陷与高紧迫度痛点。建议产研团队持续监控实时社群动态，"
+                f"并结合「近30天」或「全周期」宏观视图进行跨版本产品体验治理与需求研判。"
+            )
+        elif include_ai_summary and not force_mock:
             ai_summary = await self._generate_ai_executive_summary(
                 category_dynamics=category_dynamics,
                 critical_insights=critical_insights,
                 rag_highlights=rag_highlights,
                 recommendations=recommendations,
+                period_name=p_name,
             )
         else:
-            top_cat_zh = category_dynamics[0].category_zh if category_dynamics else "配置与音色"
+            top_cat_zh = category_dynamics[0].category_zh if category_dynamics else "常规体验"
             crit_note = f"，其中【{critical_insights[0].title}】引发用户集中关注" if critical_insights else ""
             ai_summary = (
-                f"本报告周期内社群反馈呈现出明显的模块聚集特征，其中【{top_cat_zh}】相关反馈最为密集{crit_note}。"
-                f"核心业务痛点主要集中在两类：一是特定边缘操作链路下的软硬件枚举与稳定性缺陷，直接影响核心演奏与使用功能；"
+                f"在【{p_name}】内，社群反馈呈现出显著的业务模块聚集特征，其中【{top_cat_zh}】相关反馈最为密集{crit_note}。"
+                f"核心业务痛点主要集中在两类：一是特定边缘操作链路下的软硬件枚举与稳定性缺陷，直接影响核心弹唱与使用功能；"
                 f"二是高客单价配件或新特性的内容透明度不足与预期管理缺位，引发了潜在口碑风险。"
                 f"建议产品与研发团队双轨并进：研发侧优先攻坚阻断性固件与链路时序，运营与产品侧紧急补齐场景化试听与图文指引物料，"
                 f"并建立针对核心反馈用户的定向回访闭环机制。"
@@ -1052,25 +1425,41 @@ class ReportGenerator:
         critical_insights: list[CriticalInsightItem],
         rag_highlights: list[dict[str, Any]],
         recommendations: list[str],
+        period_name: str = "当前统计周期",
     ) -> str:
         """Invokes LLM to generate an executive-level strategic analysis grounded on RAG retrieved facts."""
+        if not category_dynamics and not critical_insights and not rag_highlights:
+            return (
+                f"在【{period_name}】内，社群流水线运行平稳，当前时间窗口内暂无新增社群消息与突发异常上报。"
+                f"建议持续监控实时社群动态，并结合历史周期（如近30天或全周期）进行宏观趋势研判。"
+            )
+
         provider = self.gateway.get_text_provider()
-        cat_lines = "\n".join(f"- {c.category_zh}: {c.total_count} 条 (变动: {c.change_pct or 0}%, 预警: {c.alert_level})" for c in category_dynamics[:5])
+        cat_lines = "\n".join(f"- {c.category_zh}: 反馈总计 {c.total_count} 条 (主题 {c.topic_count} 个, 洞察 {c.insight_count} 条, 环比变动: {c.change_pct or 0}%, 预警: {c.alert_level})" for c in category_dynamics[:5])
         ins_lines = "\n".join(f"- [{i.severity_zh}] {i.title}: {i.symptom}" for i in critical_insights[:5])
         rag_lines = "\n".join(f"- 【{h['category']}】{h['title']}: {h['snippet']}" for h in rag_highlights[:4]) or "（无特定突发 RAG 切片）"
 
         prompt = (
-            "你是一个资深硬件与互联网产品总监（CPO/VP of Product）。\n"
-            "请基于以下社群真实反馈数据以及 RAG 知识库检索出的典型原声事实，为公司高管团队撰写一段深入、精炼、具备战略前瞻性的【VoC 业务管理层综述】（字数 250~350 字，结构化 2 段）：\n"
-            f"【核心模块分布与变动】:\n{cat_lines}\n\n"
+            f"你是一个资深硬件与互联网产品首席产品官 (CPO) / VoC 战略分析专家。\n"
+            f"请基于【{period_name}】的社群真实反馈数据以及典型原声事实，为公司高管团队撰写一段深入、精炼、具备战略前瞻性的【VoC 业务管理层决策综述】（字数 250~350 字，结构化分为 2 段）：\n\n"
+            f"【核心业务模块分布与异动】:\n{cat_lines}\n\n"
             f"【关键严重缺陷与痛点】:\n{ins_lines}\n\n"
-            f"【RAG 检索知识库典型原声与上下文切片】:\n{rag_lines}\n\n"
-            "要求：客观中立、透视问题本质、直击体验与商业风险，指出明确的研发攻坚与产品运营协同策略。"
+            f"【典型社群原声与上下文切片】:\n{rag_lines}\n\n"
+            f"要求：\n"
+            f"1. 严格契合【{period_name}】的时间跨度特征，客观中立、透视问题本质；\n"
+            f"2. 穿透表层原声直击软硬件核心体验卡点（如制谱保存、音色引擎、固件时序、蓝牙连接等）与商业/口碑风险；\n"
+            f"3. 提出明确的研发攻坚与产品运营协同闭环抓手。"
         )
         try:
+            from packages.model_gateway.settings_manager import SettingsManager
+            cfg_mgr = SettingsManager.get_instance()
+            sys_prompt = cfg_mgr.get_module_system_prompt("voc_report")
+            if not sys_prompt:
+                sys_prompt = "你是严谨专业的 ChatInsight VoC 高管战略顾问。"
+
             res = await provider.generate_text(
                 messages=[
-                    {"role": "system", "content": "你是严谨专业的 ChatInsight VoC 高管战略顾问。"},
+                    {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=800,
@@ -1079,8 +1468,8 @@ class ReportGenerator:
             return res.text.strip()
         except Exception:
             return (
-                "本期社群原声表明，核心产品风险已从常规体验建议延伸至关键功能链路与配件价值感知。"
-                "建议技术团队聚焦固件启动时序排查，市场与产品团队强化扩展卡试听与价值透明度建设。"
+                f"在【{period_name}】内，社群原声表明核心产品风险已从常规体验建议延伸至关键功能链路与配件价值感知。"
+                f"建议技术团队聚焦固件启动时序与保存稳定性排查，市场与产品团队强化扩展卡试听与价值透明度建设。"
             )
 
     async def generate_report(
@@ -1094,7 +1483,7 @@ class ReportGenerator:
         Master method to generate a full VoC Business Report with Operational Overview
         and High-Value Content Synthesis.
         """
-        curr_start, curr_end, _, _, default_label, _ = await self._resolve_period_dates(period)
+        curr_start, curr_end, _, _, default_label, _, _ = await self._resolve_period_dates(period)
         final_label = period_label or default_label
 
         operational_overview = await self.get_operational_overview(period=period)
@@ -1104,12 +1493,19 @@ class ReportGenerator:
             force_mock=force_mock,
         )
 
-        # Fetch raw topics for fallback if no messages/insights exist (e.g. in mock unit tests)
-        all_topics = (await self.session.execute(select(Topic).order_by(desc(Topic.feedback_count)))).scalars().all()
-        topic_feedbacks = sum(t.feedback_count for t in all_topics)
-        final_feedbacks = operational_overview.total_messages if operational_overview.total_messages > 0 else (topic_feedbacks or 0)
-        final_topics = operational_overview.total_topics if operational_overview.total_topics > 0 else len(all_topics)
-        final_users = operational_overview.total_active_users if operational_overview.total_active_users > 0 else sum(t.unique_users_count for t in all_topics)
+        # Fetch raw topics for fallback ONLY if no messages/insights exist AND database has no episodes (e.g. in mock unit tests)
+        has_episodes = (await self.session.execute(select(Episode))).scalars().first() is not None
+        if not has_episodes:
+            all_topics = (await self.session.execute(select(Topic).order_by(desc(Topic.feedback_count)))).scalars().all()
+            topic_feedbacks = sum(t.feedback_count for t in all_topics)
+            final_feedbacks = operational_overview.total_messages if operational_overview.total_messages > 0 else (topic_feedbacks or 0)
+            final_topics = operational_overview.total_topics if operational_overview.total_topics > 0 else len(all_topics)
+            final_users = operational_overview.total_active_users if operational_overview.total_active_users > 0 else sum(t.unique_users_count for t in all_topics)
+        else:
+            all_topics = []
+            final_feedbacks = operational_overview.total_messages
+            final_topics = operational_overview.total_topics
+            final_users = operational_overview.total_active_users
 
         # Build legacy structures for backward compatibility
         module_dist: list[MetricDistribution] = []

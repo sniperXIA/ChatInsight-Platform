@@ -28,6 +28,7 @@ class BitableRecordPayload(BaseModel):
     title: str = Field(alias="洞察标题")
     fact_5w1h: str = Field(alias="5W1H事实")
     severity: str = Field(alias="严重级别")
+    device_model: Optional[str] = Field(default=None, alias="设备机型")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -48,19 +49,30 @@ class PushedInsightItem(BaseModel):
     id: str = ""
     insight_id: str
     title: str
+    summary: str = ""
+    description: str = ""
+    device_model: str = ""
     module: str
     module_zh: str
     tags: list[str] = Field(default_factory=list)
     insight_type: str
     type_zh: str
+    type_label_zh: str = ""
     severity: str
     severity_zh: str
+    severity_label_zh: str = ""
     priority: str = "P1"
     fact_5w1h: str
     facts_zh: str = ""
+    confidence_level: str = "high"
+    confidence_reason: str = ""
+    factual_score: float = 1.0
+    confidence: float = 1.0
+    status_in_chat: str = "unresolved"
+    status_label_zh: str = "讨论中/未解决"
     last_pushed_at: Optional[str] = None
     last_operator: Optional[str] = None
-    push_status: str = "not_pushed"  # success | failed | not_pushed
+    push_status: str = "not_pushed"  # success | failed | pending | not_pushed
     push_count: int = 0
     push_history: list[PushHistoryRecordItem] = Field(default_factory=list)
     drilldown_uri: str = ""

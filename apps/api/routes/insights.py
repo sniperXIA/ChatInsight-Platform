@@ -128,8 +128,29 @@ class InsightResponse(BaseModel):
     push_status: str = "not_pushed"  # success | failed | not_pushed
     last_pushed_at: Optional[str] = None
     push_count: int = 0
+    device_model: Optional[str] = None
     push_history: list[PushHistoryRecord] = []
     created_at: str
+
+
+class InsightStatsResponse(BaseModel):
+    # 当前筛选/时间段下的精准统计 (Filtered Stats)
+    total_insights: int = Field(description="需求洞察总数")
+    pending_push_count: int = Field(description="待推送需求数")
+    pushed_success_count: int = Field(description="飞书推送成功数")
+    pushed_failed_count: int = Field(description="飞书推送失败数")
+    push_success_rate: float = Field(description="推送覆盖/成功率百分比 (0-100)")
+    blocker_major_count: int = Field(description="致命阻塞与严重故障总数 (Blocker + Major)")
+    blocker_count: int = Field(description="致命阻塞数 (Blocker)")
+    major_count: int = Field(description="严重故障数 (Major)")
+    minor_count: int = Field(description="一般缺陷数 (Minor)")
+    trivial_count: int = Field(description="轻微建议数 (Trivial)")
+
+    # 全局无筛选基准大盘 (Global Baseline)
+    global_total_insights: int = Field(description="全局需求洞察总数基准")
+    global_pending_push_count: int = Field(description="全局待推送需求数基准")
+    global_pushed_success_count: int = Field(description="全局飞书推送成功数基准")
+    global_blocker_major_count: int = Field(description="全局致命阻塞与严重故障总数基准")
 
 
 class EvidenceMessageItem(BaseModel):
@@ -158,6 +179,9 @@ class InsightEvidenceResponse(BaseModel):
     confidence_reason: str
     claims: list[ClaimResponse]
     messages: list[EvidenceMessageItem]
+    module: Optional[str] = None
+    device_model: Optional[str] = None
+    created_at: Optional[str] = None
 
 
 class ReviewInsightRequest(BaseModel):
@@ -283,6 +307,7 @@ def _enrich_insight(
         push_status=push_status,
         last_pushed_at=last_pushed_at,
         push_count=push_count,
+        device_model=getattr(ins, "device_model", None),
         push_history=push_hist,
         created_at=ins.created_at.isoformat(),
     )
@@ -342,6 +367,7 @@ async def batch_extract_insights(
     """Batch extracts varied, grounded insights from multiple episodes."""
     if payload.clean_previous:
         await session.execute(delete(TopicInsightLink))
+        await session.execute(delete(InsightPushRecord))
         await session.execute(delete(InsightClaim))
         await session.execute(delete(Insight))
         await session.execute(delete(Topic))
@@ -371,6 +397,108 @@ async def batch_extract_insights(
     return responses
 
 
+@router.get("/api/v1/insights/stats", response_model=InsightStatsResponse)
+async def get_insight_stats(
+    search: Optional[str] = Query(default=None, description="全文关键字检索（标题、描述、模块）"),
+    tags: Optional[str] = Query(default=None, description="多选标签，英文逗号分隔"),
+    date_preset: str = Query(default="all", description="all | today | yesterday | last_7_days | last_30_days | custom"),
+    start_date: Optional[str] = Query(default=None, description="自定义起始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(default=None, description="自定义结束日期 YYYY-MM-DD"),
+    state: Optional[str] = Query(default=None),
+    insight_type: Optional[str] = Query(default=None),
+    severity: Optional[str] = Query(default=None),
+    push_status: Optional[str] = Query(default=None, description="all | success | failed | pending | not_pushed"),
+    module: Optional[str] = Query(default=None),
+    device_model: Optional[str] = Query(default=None, description="设备机型过滤，如 C2, U1, C1 或 none/通用"),
+    session: AsyncSession = Depends(get_session),
+):
+    """Calculates non-truncated, authentic aggregate metrics for requirements & push dashboard."""
+    repo = RepositoryRegistry(session)
+
+    # 1. Parse date range
+    dt_start, dt_end = _resolve_scope_dates(date_preset, start_date, end_date)
+
+    # 2. Parse tag keys
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+
+    # 3. Fetch all insights matching filter criteria without pagination limit
+    filtered_insights = await repo.get_insights_for_stats(
+        state=state,
+        insight_type=insight_type,
+        severity=severity,
+        module=module,
+        device_model=device_model,
+        search=search,
+        tag_keys=tag_list,
+        start_date=dt_start,
+        end_date=dt_end,
+    )
+
+    # 4. Fetch valid push records to determine push statuses accurately
+    push_q = (
+        select(InsightPushRecord)
+        .join(Insight, InsightPushRecord.insight_id == Insight.id)
+        .order_by(desc(InsightPushRecord.created_at))
+    )
+    all_push_recs = (await session.execute(push_q)).scalars().all()
+    push_map: dict[str, str] = {}
+    for r in all_push_recs:
+        if r.insight_id not in push_map:
+            push_map[r.insight_id] = r.state
+
+    # 5. Apply push_status filter if specified
+    if push_status and push_status != "all":
+        final_insights = []
+        for ins in filtered_insights:
+            p_st = push_map.get(ins.id, "not_pushed")
+            if push_status == "success" and p_st != "success":
+                continue
+            elif push_status == "failed" and p_st != "failed":
+                continue
+            elif push_status in ("pending", "not_pushed") and p_st in ("success", "failed"):
+                continue
+            final_insights.append(ins)
+    else:
+        final_insights = filtered_insights
+
+    # 6. Filtered counts
+    tot = len(final_insights)
+    pushed_succ = sum(1 for ins in final_insights if push_map.get(ins.id, "not_pushed") == "success")
+    pushed_fail = sum(1 for ins in final_insights if push_map.get(ins.id, "not_pushed") == "failed")
+    pending_push = tot - pushed_succ
+    push_rate = round((pushed_succ / tot * 100.0), 1) if tot > 0 else 0.0
+
+    b_cnt = sum(1 for ins in final_insights if ins.severity == "blocker")
+    m_cnt = sum(1 for ins in final_insights if ins.severity == "major")
+    min_cnt = sum(1 for ins in final_insights if ins.severity == "minor")
+    triv_cnt = sum(1 for ins in final_insights if ins.severity == "trivial")
+    bm_cnt = b_cnt + m_cnt
+
+    # 7. Global baseline counts
+    global_all_insights = (await session.execute(select(Insight))).scalars().all()
+    global_tot = len(global_all_insights)
+    global_succ = sum(1 for ins in global_all_insights if push_map.get(ins.id, "not_pushed") == "success")
+    global_pending = global_tot - global_succ
+    global_bm = sum(1 for ins in global_all_insights if ins.severity in ("blocker", "major"))
+
+    return InsightStatsResponse(
+        total_insights=tot,
+        pending_push_count=pending_push,
+        pushed_success_count=pushed_succ,
+        pushed_failed_count=pushed_fail,
+        push_success_rate=push_rate,
+        blocker_major_count=bm_cnt,
+        blocker_count=b_cnt,
+        major_count=m_cnt,
+        minor_count=min_cnt,
+        trivial_count=triv_cnt,
+        global_total_insights=global_tot,
+        global_pending_push_count=global_pending,
+        global_pushed_success_count=global_succ,
+        global_blocker_major_count=global_bm,
+    )
+
+
 @router.get("/api/v1/insights", response_model=list[InsightResponse])
 async def list_insights(
     search: Optional[str] = Query(default=None, description="全文关键字检索（标题、描述、模块）"),
@@ -384,7 +512,8 @@ async def list_insights(
     severity: Optional[str] = Query(default=None),
     push_status: Optional[str] = Query(default=None, description="all | success | failed | pending | not_pushed"),
     module: Optional[str] = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
+    device_model: Optional[str] = Query(default=None, description="设备机型过滤，如 C2, U1, C1 或 none/通用"),
+    limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
 ):
@@ -401,6 +530,7 @@ async def list_insights(
         insight_type=insight_type,
         severity=severity,
         module=module,
+        device_model=device_model,
         search=search,
         tag_keys=tag_list,
         start_date=dt_start,
@@ -579,6 +709,9 @@ async def get_insight_evidence(id: str, session: AsyncSession = Depends(get_sess
                         )
                     ],
                     messages=evidence_messages,
+                    device_model="C2" if ("c2" in conv_name.lower()) else ("U1" if "u1" in conv_name.lower() else None),
+                    module=None,
+                    created_at=msg_target.sent_at.isoformat() if msg_target and msg_target.sent_at else None,
                 )
 
     if not ins:
@@ -693,6 +826,14 @@ async def get_insight_evidence(id: str, session: AsyncSession = Depends(get_sess
         conf_level = "low"
         conf_reason = f"低置信度 ({int(score * 100)}%)：缺乏直接原句支持，可能属于推测或泛化描述"
 
+    model_val = getattr(ins, "device_model", None)
+    if not model_val:
+        all_txt = " ".join([m.raw_text for m in evidence_messages])
+        if "c2" in conv_name.lower() or "c2" in all_txt.lower():
+            model_val = "C2"
+        elif "u1" in conv_name.lower() or "u1" in all_txt.lower():
+            model_val = "U1"
+
     return InsightEvidenceResponse(
         insight_id=ins.id,
         episode_id=ins.episode_id,
@@ -706,6 +847,9 @@ async def get_insight_evidence(id: str, session: AsyncSession = Depends(get_sess
         confidence_reason=conf_reason,
         claims=claim_responses,
         messages=evidence_messages,
+        module=ins.module,
+        device_model=model_val,
+        created_at=ins.created_at.isoformat() if ins and ins.created_at else None,
     )
 
 

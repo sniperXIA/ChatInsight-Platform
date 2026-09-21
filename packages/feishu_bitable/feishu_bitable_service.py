@@ -21,6 +21,43 @@ from packages.persistence.models import Insight, InsightPushRecord
 logger = logging.getLogger(__name__)
 
 
+TYPE_LABEL_MAP = {
+    "issue": "🐛 产品缺陷",
+    "product_issue": "🐛 产品缺陷",
+    "bug": "🐛 产品缺陷",
+    "feature_request": "💡 功能需求",
+    "explicit_requirement": "💡 明确功能需求",
+    "latent_need": "🔍 潜在需求挖掘",
+    "usability_opportunity": "🎯 体验与易用性优化",
+    "inquiry": "❓ 咨询求助",
+    "consultation": "❓ 使用指导与咨询",
+    "documentation_gap": "📖 说明与文档缺失",
+    "praise": "❤️ 体验好评",
+    "positive_signal": "❤️ 积极体验好评",
+    "non_product": "💬 社群日常交流",
+    "suggestion": "💡 体验建议",
+    "general": "💬 综合交流",
+}
+
+SEVERITY_LABEL_MAP = {
+    "blocker": "🚨 致命阻塞",
+    "critical": "🚨 致命阻塞",
+    "major": "⚠️ 严重故障",
+    "high": "⚠️ 严重故障",
+    "minor": "📌 一般缺陷",
+    "trivial": "🌱 轻微建议",
+    "low": "🌱 轻微建议",
+}
+
+STATUS_LABEL_MAP = {
+    "unresolved": "⏳ 讨论中/未解决",
+    "support_acknowledged": "👨‍💻 客服已确认/记录",
+    "workaround_provided": "🛠️ 已提供临时规避方案",
+    "fix_confirmed": "✅ 用户确认已解决",
+    "reported": "📢 用户初次上报",
+}
+
+
 class FeishuBitableService:
     """Service orchestrating Insight synchronization to Feishu Bitable."""
 
@@ -180,9 +217,10 @@ class FeishuBitableService:
         date_preset: str = "all",
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        status_filter: Optional[str] = None,  # success | failed | not_pushed
+        status_filter: Optional[str] = None,  # success | failed | not_pushed | pushed
         module_filter: Optional[str] = None,
         search_query: Optional[str] = None,
+        insight_ids: Optional[list[str]] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[PushedInsightItem], int]:
@@ -192,6 +230,10 @@ class FeishuBitableService:
         """
         # 1. Fetch insights
         q = select(Insight)
+        if insight_ids is not None:
+            if not insight_ids:
+                return [], 0
+            q = q.where(Insight.id.in_(insight_ids))
         if module_filter and module_filter.strip().lower() not in ("all", "全部", ""):
             q = q.where(Insight.module.like(f"%{module_filter.strip()}%"))
         if search_query and search_query.strip():
@@ -235,9 +277,12 @@ class FeishuBitableService:
         }
         sev_mapping = {
             "blocker": "🚨 致命阻塞",
+            "critical": "🚨 致命阻塞",
             "major": "⚠️ 严重故障",
+            "high": "⚠️ 严重故障",
             "minor": "📌 一般缺陷",
             "trivial": "🌱 轻微建议",
+            "low": "🌱 轻微建议",
         }
 
         items: list[PushedInsightItem] = []
@@ -260,6 +305,9 @@ class FeishuBitableService:
                 sf = status_filter.strip().lower()
                 if sf in ("pending", "not_pushed"):
                     if p_status not in ("pending", "not_pushed"):
+                        continue
+                elif sf in ("pushed", "has_pushed"):
+                    if p_status not in ("success", "failed"):
                         continue
                 elif p_status != sf:
                     continue
@@ -285,28 +333,54 @@ class FeishuBitableService:
             raw_tags = list(ins.tags_json or [])
             formatted_tags = [f"#{TagManager.format_tag_display(t).lstrip('#')}" for t in raw_tags if t]
 
+            score = float(ins.factual_score if ins.factual_score is not None else (ins.confidence or 1.0))
+            if score >= 0.85:
+                conf_level = "high"
+                conf_reason = f"高置信度 ({int(score * 100)}%)：核心事实由聊天原句及客服明确印证，证据充分闭环"
+            elif score >= 0.60:
+                conf_level = "medium"
+                conf_reason = f"中置信度 ({int(score * 100)}%)：部分主张有据可查，部分背景信息包含模型推断"
+            else:
+                conf_level = "low"
+                conf_reason = f"低置信度 ({int(score * 100)}%)：缺乏直接原句支持，可能属于社群推测或泛化描述"
+
+            type_label_zh = TYPE_LABEL_MAP.get(ins.insight_type, TagManager.format_tag_display(ins.insight_type))
+            sev_label_zh = SEVERITY_LABEL_MAP.get(ins.severity, ins.severity)
+            status_label_zh = STATUS_LABEL_MAP.get(ins.status_in_chat, ins.status_in_chat or "讨论中/未解决")
+
             items.append(
                 PushedInsightItem(
                     id=ins.id,
                     insight_id=ins.id,
                     title=clean_title,
+                    summary=ins.summary,
+                    description=ins.description or ins.summary,
+                    device_model=getattr(ins, "device_model", "") or "",
                     module=ins.module,
                     module_zh=module_zh,
                     tags=formatted_tags,
                     insight_type=ins.insight_type,
                     type_zh=type_mapping.get(ins.insight_type, "功能需求"),
+                    type_label_zh=type_label_zh,
                     severity=ins.severity,
                     severity_zh=sev_mapping.get(ins.severity, "📌 一般缺陷"),
+                    severity_label_zh=sev_label_zh,
                     priority=ins.priority or "P1",
                     fact_5w1h=FeishuBitableClient.format_5w1h_multiline(ins.description or ins.summary),
                     facts_zh=FeishuBitableClient.format_5w1h_multiline(ins.description or ins.summary),
+                    confidence_level=conf_level,
+                    confidence_reason=conf_reason,
+                    factual_score=score,
+                    confidence=score,
+                    status_in_chat=ins.status_in_chat or "unresolved",
+                    status_label_zh=status_label_zh,
                     last_pushed_at=last_push_time,
                     last_operator=history[0].operator if history else None,
                     push_status=p_status,
                     push_count=push_cnt,
                     push_history=history_items,
                     drilldown_uri=f"chatinsight://insights/{ins.id}",
-                    created_at=ins.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                    created_at=ins.created_at.strftime("%Y-%m-%d %H:%M:%S") if isinstance(ins.created_at, datetime) else str(ins.created_at),
                 )
             )
 
@@ -329,8 +403,8 @@ class FeishuBitableService:
             ins_q = ins_q.where(Insight.created_at.between(dt_start, dt_end))
         total_insights = (await self.session.execute(ins_q)).scalar_one_or_none() or 0
 
-        # 2. Push records in date window
-        rec_q = select(InsightPushRecord)
+        # 2. Push records in date window (ensuring insight_id belongs to an existing insight)
+        rec_q = select(InsightPushRecord).join(Insight, InsightPushRecord.insight_id == Insight.id)
         if dt_start and dt_end:
             rec_q = rec_q.where(InsightPushRecord.created_at.between(dt_start, dt_end))
 
@@ -356,14 +430,51 @@ class FeishuBitableService:
         await self.session.commit()
         return res.rowcount or 0
 
-    async def get_recent_pushed_insights(self, limit: int = 8) -> list[PushedInsightItem]:
-        """Fetches latest pushed insights for the Overview Tab."""
+    async def get_recent_pushed_insights(
+        self,
+        date_preset: str = "all",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 8,
+    ) -> list[PushedInsightItem]:
+        """
+        Fetches latest pushed insights for the Overview Tab within the specified period.
+        Strictly limits to insights with actual push actions (success or failed).
+        Excludes unpushed / pending insights.
+        Ordered by most recent push attempt descending.
+        """
+        dt_start, dt_end = self._resolve_date_range(date_preset, start_date, end_date)
+
+        rec_q = (
+            select(InsightPushRecord)
+            .join(Insight, InsightPushRecord.insight_id == Insight.id)
+        )
+        if dt_start and dt_end:
+            rec_q = rec_q.where(InsightPushRecord.created_at.between(dt_start, dt_end))
+        rec_q = rec_q.order_by(desc(InsightPushRecord.created_at))
+
+        push_records = (await self.session.execute(rec_q)).scalars().all()
+        if not push_records:
+            return []
+
+        seen_ids = set()
+        ordered_insight_ids: list[str] = []
+        for r in push_records:
+            if r.insight_id not in seen_ids:
+                seen_ids.add(r.insight_id)
+                ordered_insight_ids.append(r.insight_id)
+                if len(ordered_insight_ids) >= limit:
+                    break
+
         items, _ = await self.get_pushed_insights_list(
             date_preset="all",
+            insight_ids=ordered_insight_ids,
             limit=limit,
-            offset=0,
         )
-        return items
+
+        id_to_item = {i.id: i for i in items}
+        ordered_items = [id_to_item[i_id] for i_id in ordered_insight_ids if i_id in id_to_item]
+        return ordered_items
 
     @staticmethod
     def _resolve_date_range(

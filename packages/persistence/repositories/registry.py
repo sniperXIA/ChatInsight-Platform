@@ -439,6 +439,7 @@ class RepositoryRegistry:
         confidence: float = 0.9,
         tags: list[str] | None = None,
         analysis_run_id: str | None = None,
+        device_model: str | None = None,
     ) -> Insight:
         ins = Insight(
             id=generate_id(),
@@ -450,6 +451,7 @@ class RepositoryRegistry:
             sub_module=sub_module,
             severity=severity,
             priority=priority,
+            device_model=device_model,
             summary=summary,
             description=description,
             status_in_chat=status_in_chat,
@@ -494,6 +496,7 @@ class RepositoryRegistry:
         insight_type: str | None = None,
         severity: str | None = None,
         module: str | None = None,
+        device_model: str | None = None,
         search: str | None = None,
         tag_keys: list[str] | None = None,
         start_date: datetime | None = None,
@@ -511,6 +514,12 @@ class RepositoryRegistry:
             stmt = stmt.where(Insight.severity == severity)
         if module:
             stmt = stmt.where(Insight.module == module)
+        if device_model and device_model.strip():
+            dm_clean = device_model.strip()
+            if dm_clean.lower() in ("none", "general", "null", "未指定", "通用"):
+                stmt = stmt.where(or_(Insight.device_model.is_(None), Insight.device_model == ""))
+            else:
+                stmt = stmt.where(Insight.device_model.ilike(f"%{dm_clean}%"))
         if search and search.strip():
             kw = f"%{search.strip()}%"
             stmt = stmt.where(or_(Insight.summary.ilike(kw), Insight.description.ilike(kw), Insight.module.ilike(kw)))
@@ -547,6 +556,55 @@ class RepositoryRegistry:
             stmt = stmt.order_by(desc(Insight.created_at))
 
         stmt = stmt.offset(offset).limit(limit)
+        res = await self.session.execute(stmt)
+        return list(res.scalars().all())
+
+    async def get_insights_for_stats(
+        self,
+        state: str | None = None,
+        insight_type: str | None = None,
+        severity: str | None = None,
+        module: str | None = None,
+        device_model: str | None = None,
+        search: str | None = None,
+        tag_keys: list[str] | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> list[Insight]:
+        """Fetches all insights matching criteria without pagination limit for accurate aggregate metrics."""
+        stmt = select(Insight)
+        if state:
+            stmt = stmt.where(Insight.state == state)
+        if insight_type:
+            stmt = stmt.where(Insight.insight_type == insight_type)
+        if severity:
+            stmt = stmt.where(Insight.severity == severity)
+        if module:
+            stmt = stmt.where(Insight.module == module)
+        if device_model and device_model.strip():
+            dm_clean = device_model.strip()
+            if dm_clean.lower() in ("none", "general", "null", "未指定", "通用"):
+                stmt = stmt.where(or_(Insight.device_model.is_(None), Insight.device_model == ""))
+            else:
+                stmt = stmt.where(Insight.device_model.ilike(f"%{dm_clean}%"))
+        if search and search.strip():
+            kw = f"%{search.strip()}%"
+            stmt = stmt.where(or_(Insight.summary.ilike(kw), Insight.description.ilike(kw), Insight.module.ilike(kw)))
+        if start_date:
+            stmt = stmt.where(Insight.created_at >= start_date)
+        if end_date:
+            stmt = stmt.where(Insight.created_at <= end_date)
+
+        if tag_keys and len(tag_keys) > 0:
+            or_clauses = []
+            for tk in tag_keys:
+                tk_clean = tk.strip()
+                if tk_clean:
+                    or_clauses.append(Insight.tags_json.cast(String).ilike(f"%{tk_clean}%"))
+                    or_clauses.append(Insight.module.ilike(f"%{tk_clean}%"))
+            if or_clauses:
+                stmt = stmt.where(or_(*or_clauses))
+
         res = await self.session.execute(stmt)
         return list(res.scalars().all())
 

@@ -20,9 +20,16 @@ from packages.analytics.report_generator import ReportGenerator
 from packages.importers.chat_settings import ChatSettingsManager
 from packages.model_gateway.settings_manager import SettingsManager
 from packages.persistence.db import get_session
+from packages.tasks.scheduled_task_manager import (
+    STAGE_DISPLAY_NAMES,
+    ScheduledTaskConfig,
+    ScheduledTaskManager,
+    get_ordered_steps,
+)
 from packages.tasks.task_manager import ActiveTaskState, TaskManager
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["Task Center & Background Tasks"])
+
 
 
 class LaunchTaskRequest(BaseModel):
@@ -278,7 +285,13 @@ async def launch_task(payload: LaunchTaskRequest):
             summary["scope_label"] = scope_label
             await tm.complete_task(task_id=state.task_id, steps=steps, summary=summary)
 
-    runner = full_pipeline_runner if payload.task_type == "full_pipeline" else single_step_runner
+    if payload.task_type == "full_pipeline":
+        runner = full_pipeline_runner
+    elif payload.task_type in ("scheduled_pipeline", "chained_pipeline"):
+        runner = chained_pipeline_runner
+    else:
+        runner = single_step_runner
+
     state = await tm.submit_task(
         task_type=payload.task_type,
         title=task_title,
@@ -286,6 +299,348 @@ async def launch_task(payload: LaunchTaskRequest):
         runner_fn=runner,
     )
     return state.to_dict()
+
+
+async def chained_pipeline_runner(state: ActiveTaskState, session_maker: async_sessionmaker[AsyncSession]):
+    """
+    Sequential execution runner for scheduled and chained pipeline tasks.
+    Enforces strict benchmark order:
+    1. scan_import -> 2. multimodal -> 3. segmentation -> 4. insight_extraction
+    """
+    steps: list[dict[str, Any]] = []
+    summary: dict[str, Any] = {}
+    params = state.params or {}
+
+    selected_steps = params.get("ordered_steps") or params.get("selected_steps") or []
+    ordered_steps = get_ordered_steps(selected_steps)
+    if not ordered_steps:
+        ordered_steps = ["scan_import", "segmentation", "insight_extraction"]
+
+    source_path = params.get("source_path") or ChatSettingsManager.load_settings().source_path
+    force_mock = params.get("force_mock", False)
+    import_all = params.get("import_all", True)
+    limit_batches = params.get("limit_batches")
+    limit_episodes = params.get("limit_episodes")
+    clean_previous_insights = params.get("clean_previous_insights", False)
+    overwrite_existing = params.get("overwrite_existing", True)
+    conversation_ids = params.get("conversation_ids") or []
+    date_preset = params.get("date_preset", "all")
+    start_date = params.get("start_date")
+    end_date = params.get("end_date")
+
+    st_time, et_time, scope_label = resolve_scope_time_bounds(
+        date_preset=date_preset,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    total_stages = len(ordered_steps)
+    pct_per_stage = 90.0 / max(total_stages, 1)
+
+    tm = TaskManager.get_instance()
+    has_error = False
+
+    async with session_maker() as session:
+        for idx, step_id in enumerate(ordered_steps):
+            if state.cancel_requested:
+                return
+
+            base_pct = int(idx * pct_per_stage)
+            max_pct = int((idx + 1) * pct_per_stage)
+
+            if step_id == "scan_import":
+                step_name = STAGE_DISPLAY_NAMES.get("scan_import", "1. 扫描与全量导入")
+                await tm.update_progress(
+                    task_id=state.task_id,
+                    progress_pct=base_pct,
+                    current_step_name=step_name,
+                    current_item_label=f"正在扫描入库聊天记录: {source_path}",
+                    steps=steps,
+                    summary=summary,
+                )
+                try:
+                    step_res = await _run_scan_and_import(
+                        session=session,
+                        source_path=source_path,
+                        limit_batches=limit_batches if not import_all else None,
+                        clean_previous=clean_previous_insights,
+                    )
+                    steps.append(step_res.model_dump())
+                    summary["imported_batches"] = step_res.success_count
+                    if step_res.status == "error":
+                        has_error = True
+                        state.error_summary = f"步骤 1 失败: {step_res.details}"
+                        await tm.update_progress(
+                            task_id=state.task_id,
+                            progress_pct=max_pct,
+                            current_step_name=step_name,
+                            current_item_label=f"扫描导入异常，中止后续步骤: {step_res.details}",
+                            steps=steps,
+                            summary=summary,
+                            error_summary=state.error_summary,
+                        )
+                        break
+                except Exception as e:
+                    has_error = True
+                    err_str = str(e)
+                    state.error_summary = f"步骤 1 异常: {err_str}"
+                    steps.append(PipelineStepSummary(
+                        step_id="scan_import",
+                        step_name=step_name,
+                        status="error",
+                        details=err_str,
+                    ).model_dump())
+                    await tm.update_progress(
+                        task_id=state.task_id,
+                        progress_pct=max_pct,
+                        current_step_name=step_name,
+                        current_item_label=f"扫描导入异常: {err_str}",
+                        steps=steps,
+                        summary=summary,
+                        error_summary=state.error_summary,
+                    )
+                    break
+
+            elif step_id == "multimodal":
+                step_name = STAGE_DISPLAY_NAMES.get("multimodal", "2. 多模态视觉解析")
+                await tm.update_progress(
+                    task_id=state.task_id,
+                    progress_pct=base_pct,
+                    current_step_name=step_name,
+                    current_item_label="正在提取群聊图片 OCR 文本与界面报错摘要...",
+                    steps=steps,
+                    summary=summary,
+                )
+                try:
+                    step_res = await _run_multimodal_enrichment(
+                        session=session,
+                        force_mock=force_mock,
+                        limit_media=15,
+                    )
+                    steps.append(step_res.model_dump())
+                    summary["enriched_media"] = step_res.success_count
+                    if step_res.status == "error":
+                        has_error = True
+                        state.error_summary = f"步骤 2 失败: {step_res.details}"
+                        await tm.update_progress(
+                            task_id=state.task_id,
+                            progress_pct=max_pct,
+                            current_step_name=step_name,
+                            current_item_label=f"视觉解析失败: {step_res.details}",
+                            steps=steps,
+                            summary=summary,
+                            error_summary=state.error_summary,
+                        )
+                        break
+                except Exception as e:
+                    has_error = True
+                    err_str = str(e)
+                    state.error_summary = f"步骤 2 异常: {err_str}"
+                    steps.append(PipelineStepSummary(
+                        step_id="multimodal",
+                        step_name=step_name,
+                        status="error",
+                        details=err_str,
+                    ).model_dump())
+                    await tm.update_progress(
+                        task_id=state.task_id,
+                        progress_pct=max_pct,
+                        current_step_name=step_name,
+                        current_item_label=f"多模态视觉解析异常: {err_str}",
+                        steps=steps,
+                        summary=summary,
+                        error_summary=state.error_summary,
+                    )
+                    break
+
+            elif step_id == "segmentation":
+
+                step_name = STAGE_DISPLAY_NAMES.get("segmentation", "3. 对话 Episode 话题切分")
+                async def _on_chained_segmentation_progress(processed: int, total: int, label: str, log_item: Any):
+                    if state.cancel_requested:
+                        return
+                    ratio = (processed / max(total, 1))
+                    cur_pct = base_pct + int((max_pct - base_pct) * ratio)
+                    await tm.update_progress(
+                        task_id=state.task_id,
+                        progress_pct=min(cur_pct, max_pct - 1),
+                        current_step_name=step_name,
+                        current_item_label=label,
+                        steps=steps,
+                        summary=summary,
+                    )
+
+                await tm.update_progress(
+                    task_id=state.task_id,
+                    progress_pct=base_pct,
+                    current_step_name=step_name,
+                    current_item_label=f"正在按群聊与时间范围切分话题 [{scope_label}]...",
+                    steps=steps,
+                    summary=summary,
+                )
+                try:
+                    step_res = await _run_episode_segmentation(
+                        session=session,
+                        force_mock=force_mock,
+                        conversation_ids=conversation_ids if conversation_ids else None,
+                        start_time=st_time,
+                        end_time=et_time,
+                        overwrite_existing=overwrite_existing,
+                        progress_callback=_on_chained_segmentation_progress,
+                    )
+                    steps.append(step_res.model_dump())
+                    summary["total_episodes"] = step_res.success_count
+                    if step_res.status == "error":
+                        has_error = True
+                        state.error_summary = f"步骤 3 失败: {step_res.details}"
+                        await tm.update_progress(
+                            task_id=state.task_id,
+                            progress_pct=max_pct,
+                            current_step_name=step_name,
+                            current_item_label=f"话题切分异常: {step_res.details}",
+                            steps=steps,
+                            summary=summary,
+                            error_summary=state.error_summary,
+                        )
+                        break
+                except Exception as e:
+                    has_error = True
+                    err_str = str(e)
+                    state.error_summary = f"步骤 3 异常: {err_str}"
+                    steps.append(PipelineStepSummary(
+                        step_id="segmentation",
+                        step_name=step_name,
+                        status="error",
+                        details=err_str,
+                    ).model_dump())
+                    await tm.update_progress(
+                        task_id=state.task_id,
+                        progress_pct=max_pct,
+                        current_step_name=step_name,
+                        current_item_label=f"话题切分异常: {err_str}",
+                        steps=steps,
+                        summary=summary,
+                        error_summary=state.error_summary,
+                    )
+                    break
+
+            elif step_id == "insight_extraction":
+                step_name = STAGE_DISPLAY_NAMES.get("insight_extraction", "4. 洞察提炼与事实核验")
+                async def _on_chained_insight_progress(processed: int, total: int, label: str, log_item: Any):
+                    if state.cancel_requested:
+                        return
+                    ratio = (processed / max(total, 1))
+                    cur_pct = base_pct + int((max_pct - base_pct) * ratio)
+                    await tm.update_progress(
+                        task_id=state.task_id,
+                        progress_pct=min(cur_pct, max_pct - 1),
+                        current_step_name=step_name,
+                        current_item_label=label,
+                        steps=steps,
+                        summary=summary,
+                    )
+
+                await tm.update_progress(
+                    task_id=state.task_id,
+                    progress_pct=base_pct,
+                    current_step_name=step_name,
+                    current_item_label=f"正在提炼原子主张与结构化洞察 [{scope_label}]...",
+                    steps=steps,
+                    summary=summary,
+                )
+                try:
+                    step_res, _ = await _run_insight_extraction(
+                        session=session,
+                        force_mock=force_mock,
+                        conversation_ids=conversation_ids if conversation_ids else None,
+                        start_time=st_time,
+                        end_time=et_time,
+                        overwrite_existing=overwrite_existing,
+                        limit_episodes=limit_episodes,
+                        progress_callback=_on_chained_insight_progress,
+                    )
+                    steps.append(step_res.model_dump())
+                    summary["extracted_insights"] = step_res.success_count
+                    if step_res.status == "error":
+                        has_error = True
+                        state.error_summary = f"步骤 4 失败: {step_res.details}"
+                        await tm.update_progress(
+                            task_id=state.task_id,
+                            progress_pct=max_pct,
+                            current_step_name=step_name,
+                            current_item_label=f"洞察提炼异常: {step_res.details}",
+                            steps=steps,
+                            summary=summary,
+                            error_summary=state.error_summary,
+                        )
+                        break
+                except Exception as e:
+                    has_error = True
+                    err_str = str(e)
+                    state.error_summary = f"步骤 4 异常: {err_str}"
+                    steps.append(PipelineStepSummary(
+                        step_id="insight_extraction",
+                        step_name=step_name,
+                        status="error",
+                        details=err_str,
+                    ).model_dump())
+                    await tm.update_progress(
+                        task_id=state.task_id,
+                        progress_pct=max_pct,
+                        current_step_name=step_name,
+                        current_item_label=f"洞察提炼异常: {err_str}",
+                        steps=steps,
+                        summary=summary,
+                        error_summary=state.error_summary,
+                    )
+                    break
+
+
+            await tm.update_progress(task_id=state.task_id, progress_pct=max_pct, steps=steps, summary=summary)
+
+        # Finalize task
+        if not has_error and not state.cancel_requested:
+            state.status = "completed"
+            if "insight_extraction" in ordered_steps:
+                await tm.update_progress(
+                    task_id=state.task_id,
+                    progress_pct=95,
+                    current_step_name="实时 VoC 业务报表更新",
+                    current_item_label="正在聚合最新洞察并生成全景业务报表...",
+                    steps=steps,
+                    summary=summary,
+                )
+                try:
+                    report_gen = ReportGenerator(session)
+                    report = await report_gen.generate_report(period_label=f"定期任务全景报告 ({scope_label})", force_mock=True)
+                    summary["total_feedbacks"] = report.total_feedbacks
+                    summary["total_topics"] = report.total_topics
+                except Exception:
+                    pass
+
+            summary["scope_label"] = scope_label
+            summary["executed_stages"] = ordered_steps
+            await tm.complete_task(task_id=state.task_id, steps=steps, summary=summary, status="completed")
+            stm = ScheduledTaskManager.get_instance()
+            cfg = stm.load_config()
+            cfg.last_status = "completed"
+            stm.save_config(cfg)
+        elif has_error:
+            state.status = "failed"
+            summary["scope_label"] = scope_label
+            summary["executed_stages"] = ordered_steps
+            await tm.complete_task(task_id=state.task_id, steps=steps, summary=summary, status="failed")
+            stm = ScheduledTaskManager.get_instance()
+            cfg = stm.load_config()
+            cfg.last_status = "failed"
+            stm.save_config(cfg)
+
+
+
+# Register chained runner with ScheduledTaskManager singleton
+ScheduledTaskManager.set_runner_fn(chained_pipeline_runner)
+
+
 
 
 @router.get("/active")
@@ -302,7 +657,42 @@ async def list_task_history(limit: int = Query(default=30, ge=1, le=100)):
     return await tm.get_task_history(limit=limit)
 
 
+# ==========================================
+# Scheduled Autonomous Pipeline Endpoints
+# ==========================================
+
+@router.get("/schedule", response_model=ScheduledTaskConfig)
+async def get_scheduled_task_config():
+    """
+    Get current scheduled autonomous task configuration and next run time.
+    """
+    stm = ScheduledTaskManager.get_instance()
+    return stm.load_config()
+
+
+@router.post("/schedule", response_model=ScheduledTaskConfig)
+async def update_scheduled_task_config(payload: ScheduledTaskConfig):
+    """
+    Update and persist scheduled autonomous task configuration.
+    """
+    stm = ScheduledTaskManager.get_instance()
+    saved = stm.save_config(payload)
+    return saved
+
+
+@router.post("/schedule/trigger-now")
+async def trigger_scheduled_task_now():
+    """
+    Immediately trigger the chained pipeline according to current schedule configuration,
+    executing selected steps in strictly ordered sequence.
+    """
+    stm = ScheduledTaskManager.get_instance()
+    state = await stm.trigger_task(is_scheduled=False)
+    return state.to_dict()
+
+
 @router.get("/{task_id}")
+
 async def get_task_detail(task_id: str):
     """Get real-time details and progress of a task."""
     tm = TaskManager.get_instance()
@@ -382,3 +772,4 @@ async def purge_tasks_data(payload: PurgeTasksDataRequest):
         "counts": counts,
         "message": "已成功清除勾选步骤的历史数据及记录",
     }
+

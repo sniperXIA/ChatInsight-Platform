@@ -24,6 +24,7 @@ from apps.api.routes import (
 )
 from packages.domain.models import DomainError
 from packages.persistence.db import create_all_tables, init_db_engine
+from packages.tasks.scheduled_task_manager import ScheduledTaskManager
 
 
 @asynccontextmanager
@@ -31,13 +32,20 @@ async def lifespan(app: FastAPI):
     # Initialize DB engine and create tables
     init_db_engine()
     await create_all_tables()
-    yield
+    # Start periodic autonomous task scheduler
+    scheduler = ScheduledTaskManager.get_instance()
+    scheduler.start_scheduler()
+    try:
+        yield
+    finally:
+        await scheduler.stop_scheduler()
+
 
 
 app = FastAPI(
     title="ChatInsight Platform API & Dashboard",
     description="Context Core, Multimodal Analysis & Feedback Knowledge Engine",
-    version="3.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 

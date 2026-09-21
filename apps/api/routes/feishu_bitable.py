@@ -174,9 +174,19 @@ async def get_bitable_push_stats(
 
 @router.get("/recent", response_model=list[PushedInsightItem])
 async def get_recent_pushed_insights(
+    date_preset: Optional[str] = Query(default=None, description="all | today | 7d | 30d | custom"),
+    time_range: Optional[str] = Query(default=None, description="别名兼容"),
+    start_date: Optional[str] = Query(default=None),
+    end_date: Optional[str] = Query(default=None),
     limit: int = Query(default=8, ge=1, le=50),
     session: AsyncSession = Depends(get_session),
 ):
     service = FeishuBitableService(session)
-    return await service.get_recent_pushed_insights(limit=limit)
+    effective_preset = time_range or date_preset or "all"
+    return await service.get_recent_pushed_insights(
+        date_preset=effective_preset,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
 

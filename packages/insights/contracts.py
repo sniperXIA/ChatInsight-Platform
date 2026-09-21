@@ -23,6 +23,7 @@ class InsightDraft(BaseModel):
     description: str = Field(description="详细背景、发生场景与影响面描述")
     status_in_chat: str = Field(default="unresolved", description="群聊中所体现的状态: unresolved(未解决) | support_acknowledged(客服已确认/已知问题) | workaround_provided(已提供规避方法) | fix_confirmed(已确认修复)")
     support_known_status: bool = Field(default=False, description="是否已被官方客服/技术支持明确标记为已知缺陷/已知待办")
+    device_model: Optional[str] = Field(default=None, description="针对的硬件设备机型，如 C2, U1 等，若未明确或非硬件问题则为空")
     claims: list[ClaimItem] = Field(default_factory=list, description="构成该洞察的可验证原子主张列表")
     suggested_tags: list[str] = Field(default_factory=list, description="建议打上的业务标签")
     confidence: float = Field(default=0.9, ge=0.0, le=1.0)

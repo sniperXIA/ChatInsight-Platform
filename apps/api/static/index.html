@@ -27,6 +27,22 @@
     .scrollbar-thin::-webkit-scrollbar-thumb:hover {
       background: #94a3b8;
     }
+    /* Dark Theme Scrollbar for Observatory Card */
+    .scrollbar-dark::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+    .scrollbar-dark::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 9999px;
+    }
+    .scrollbar-dark::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.22);
+      border-radius: 9999px;
+    }
+    .scrollbar-dark::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.38);
+    }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans min-h-screen">
@@ -40,7 +56,7 @@
         </div>
         <div>
           <h1 class="font-bold text-white text-base tracking-wide">ChatInsight</h1>
-          <p class="text-xs text-indigo-400 font-mono">v3.0.0 Pro</p>
+          <p class="text-xs text-indigo-400 font-mono">v1.1.0</p>
         </div>
       </div>
 
@@ -976,6 +992,19 @@
                 </span>
               </div>
 
+              <!-- Topic Time Span (初次讨论时间 & 最新讨论时间) -->
+              <div v-if="activeEpisodeModalData?.first_discussed_at || activeEpisodeModalData?.started_at" class="flex items-center gap-2.5 text-[11px] text-slate-600 font-mono bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
+                <span class="flex items-center gap-1" title="初次讨论时间">
+                  <i class="fa-solid fa-hourglass-start text-indigo-500 text-[10px]"></i>
+                  <span>初次: {{ formatDateTime(activeEpisodeModalData?.first_discussed_at || activeEpisodeModalData?.started_at) }}</span>
+                </span>
+                <span class="text-slate-300">|</span>
+                <span class="flex items-center gap-1 font-semibold text-slate-800" title="最新讨论时间">
+                  <i class="fa-regular fa-clock text-emerald-500 text-[10px]"></i>
+                  <span>最新: {{ formatDateTime(activeEpisodeModalData?.last_discussed_at || activeEpisodeModalData?.ended_at) }}</span>
+                </span>
+              </div>
+
               <!-- Switch between sub-episodes if cluster has multiple -->
               <div v-if="activeClusterEpisodes.length > 1" class="flex items-center gap-1">
                 <span class="text-slate-500 font-semibold">切分片段：</span>
@@ -1696,11 +1725,23 @@
                   <span v-if="currentInsightEvidence" :class="getConfidenceBadge(currentInsightEvidence.confidence_level)" class="px-2 py-0.5 rounded-full text-xs font-bold">
                     {{ currentInsightEvidence.confidence_level === 'high' ? '🟢 高置信度' : (currentInsightEvidence.confidence_level === 'medium' ? '🟡 中置信度' : '🔴 低置信度') }}
                   </span>
+                  <span v-if="currentInsightEvidence && currentInsightEvidence.device_model" class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300 shadow-2xs flex items-center gap-1">
+                    <i class="fa-solid fa-guitar text-amber-600 text-[10px]"></i>
+                    设备机型: {{ currentInsightEvidence.device_model }}
+                  </span>
+                  <span v-else-if="currentInsightEvidence" class="px-2 py-0.5 rounded-full text-xs text-slate-500 bg-slate-100 border border-slate-200">
+                    设备机型: 通用/未指定
+                  </span>
                 </div>
-                <p class="text-xs text-slate-500 mt-0.5 flex items-center gap-2" v-if="currentInsightEvidence">
+                <p class="text-xs text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap" v-if="currentInsightEvidence">
                   <span><i class="fa-solid fa-comments text-slate-400 mr-1"></i>来源群聊: <strong class="text-slate-700">{{ currentInsightEvidence.conversation_name }}</strong></span>
                   <span>·</span>
                   <span><i class="fa-solid fa-flag text-slate-400 mr-1"></i>社群状态: <strong class="text-slate-700">{{ currentInsightEvidence.status_label_zh }}</strong></span>
+                  <span v-if="currentInsightEvidence.created_at">·</span>
+                  <span v-if="currentInsightEvidence.created_at" class="flex items-center gap-1 font-mono text-slate-700">
+                    <i class="fa-regular fa-clock text-slate-400"></i>
+                    提炼时间: <strong>{{ formatDateTime(currentInsightEvidence.created_at) }}</strong> ({{ formatTimeAgo(currentInsightEvidence.created_at) }})
+                  </span>
                 </p>
               </div>
             </div>
@@ -1724,9 +1765,14 @@
               <div class="bg-gradient-to-br from-slate-50 to-indigo-50/30 rounded-xl border border-slate-200 p-5 space-y-4">
                 <div class="flex items-start justify-between gap-4">
                   <div>
-                    <span class="text-[11px] uppercase font-bold text-indigo-700 tracking-wider flex items-center gap-1.5 mb-1">
-                      <i class="fa-solid fa-bullseye"></i> 原子化洞察标题 (Atomic Issue)
-                    </span>
+                    <div class="flex items-center gap-2 flex-wrap mb-1">
+                      <span class="text-[11px] uppercase font-bold text-indigo-700 tracking-wider flex items-center gap-1.5">
+                        <i class="fa-solid fa-bullseye"></i> 原子化洞察标题 (Atomic Issue)
+                      </span>
+                      <span v-if="currentInsightEvidence.device_model" class="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                        🎸 机型: {{ currentInsightEvidence.device_model }}
+                      </span>
+                    </div>
                     <h2 class="text-lg font-bold text-slate-900 leading-snug">{{ currentInsightEvidence.summary }}</h2>
                   </div>
                   <button @click="copyInsightDetails(currentInsightEvidence)" class="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 text-xs font-medium rounded-lg border border-slate-200 shadow-2xs transition flex items-center gap-1.5 flex-shrink-0">
@@ -2705,13 +2751,25 @@
                 <div class="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-lg group-hover:scale-110 transition">
                   <i class="fa-solid fa-message"></i>
                 </div>
-                <span 
-                  v-if="stats.comparison?.messages_growth_pct !== null && stats.comparison?.messages_growth_pct !== undefined" 
-                  :class="stats.comparison.messages_growth_pct >= 0 ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-slate-600 bg-slate-100 border-slate-200'"
-                  class="text-[11px] font-bold px-2 py-0.5 rounded-full border font-mono"
-                >
-                  {{ stats.comparison.messages_growth_pct >= 0 ? '+' : '' }}{{ stats.comparison.messages_growth_pct }}%
-                </span>
+                <div class="relative group/pct inline-flex items-center">
+                  <span 
+                    v-if="stats.comparison?.messages_growth_pct !== null && stats.comparison?.messages_growth_pct !== undefined" 
+                    :class="stats.comparison.messages_growth_pct >= 0 ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-slate-600 bg-slate-100 border-slate-200'"
+                    class="text-[11px] font-bold px-2 py-0.5 rounded-full border font-mono cursor-help"
+                    :title="stats.comparison?.comparison_label || '环比对比'"
+                  >
+                    {{ stats.comparison.messages_growth_pct >= 0 ? '+' : '' }}{{ stats.comparison.messages_growth_pct }}%
+                  </span>
+                  <!-- Floating tooltip popup on hover -->
+                  <div 
+                    v-if="stats.comparison?.comparison_label"
+                    class="pointer-events-none absolute bottom-full mb-1.5 right-0 hidden group-hover/pct:flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/95 text-white text-[11px] rounded-md shadow-xl whitespace-nowrap z-50 font-normal transition-all duration-150"
+                  >
+                    <i class="fa-solid fa-clock-rotate-left text-[10px] text-slate-400"></i>
+                    <span>{{ stats.comparison.comparison_label }}</span>
+                    <div class="absolute top-full right-3 -mt-1 border-4 border-transparent border-t-slate-900/95"></div>
+                  </div>
+                </div>
               </div>
               <div>
                 <p class="text-xs text-slate-500 font-medium">社群原始消息</p>
@@ -2720,7 +2778,7 @@
               </div>
             </div>
 
-            <!-- 2. 话题切片 -> Episodes Tab -->
+            <!-- 2. 消息话题提取 -> Topics / Episodes Tab -->
             <div 
               @click="switchTab('episodes')" 
               class="bg-white p-5 rounded-xl border border-slate-200 shadow-xs hover:shadow-md hover:border-amber-400 cursor-pointer transition flex flex-col justify-between group"
@@ -2729,22 +2787,34 @@
                 <div class="w-11 h-11 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-lg group-hover:scale-110 transition">
                   <i class="fa-solid fa-layer-group"></i>
                 </div>
-                <span 
-                  v-if="stats.comparison?.episodes_growth_pct !== null && stats.comparison?.episodes_growth_pct !== undefined" 
-                  :class="stats.comparison.episodes_growth_pct >= 0 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-slate-600 bg-slate-100 border-slate-200'"
-                  class="text-[11px] font-bold px-2 py-0.5 rounded-full border font-mono"
-                >
-                  {{ stats.comparison.episodes_growth_pct >= 0 ? '+' : '' }}{{ stats.comparison.episodes_growth_pct }}%
-                </span>
+                <div class="relative group/pct inline-flex items-center">
+                  <span 
+                    v-if="stats.comparison?.topics_growth_pct !== null && stats.comparison?.topics_growth_pct !== undefined" 
+                    :class="stats.comparison.topics_growth_pct >= 0 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-slate-600 bg-slate-100 border-slate-200'"
+                    class="text-[11px] font-bold px-2 py-0.5 rounded-full border font-mono cursor-help"
+                    :title="stats.comparison?.comparison_label || '环比对比'"
+                  >
+                    {{ stats.comparison.topics_growth_pct >= 0 ? '+' : '' }}{{ stats.comparison.topics_growth_pct }}%
+                  </span>
+                  <!-- Floating tooltip popup on hover -->
+                  <div 
+                    v-if="stats.comparison?.comparison_label"
+                    class="pointer-events-none absolute bottom-full mb-1.5 right-0 hidden group-hover/pct:flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/95 text-white text-[11px] rounded-md shadow-xl whitespace-nowrap z-50 font-normal transition-all duration-150"
+                  >
+                    <i class="fa-solid fa-clock-rotate-left text-[10px] text-slate-400"></i>
+                    <span>{{ stats.comparison.comparison_label }}</span>
+                    <div class="absolute top-full right-3 -mt-1 border-4 border-transparent border-t-slate-900/95"></div>
+                  </div>
+                </div>
               </div>
               <div>
                 <p class="text-xs text-slate-500 font-medium">消息话题提取</p>
-                <p class="text-2xl font-bold text-slate-800 tracking-tight">{{ (stats.total_episodes || 0).toLocaleString() }}</p>
-                <p class="text-[11px] text-slate-400 mt-1">日均 {{ Math.round((stats.total_episodes || 0)/Math.max(stats.days_count || 7, 1)*10)/10 }} 个切片</p>
+                <p class="text-2xl font-bold text-slate-800 tracking-tight">{{ (stats.total_topics || 0).toLocaleString() }}</p>
+                <p class="text-[11px] text-slate-400 mt-1">聚合自 {{ (stats.total_episodes || 0).toLocaleString() }} 个切片 · 日均 {{ Math.round((stats.total_topics || 0)/Math.max(stats.days_count || 7, 1)*10)/10 }} 个话题</p>
               </div>
             </div>
 
-            <!-- 3. 需求洞察与推送 -> Insights Tab -->
+            <!-- 3. 需求洞察提炼 -> Insights Tab -->
             <div 
               @click="switchTab('insights')" 
               class="bg-white p-5 rounded-xl border border-slate-200 shadow-xs hover:shadow-md hover:border-purple-400 cursor-pointer transition flex flex-col justify-between group"
@@ -2753,18 +2823,30 @@
                 <div class="w-11 h-11 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-lg group-hover:scale-110 transition">
                   <i class="fa-solid fa-lightbulb"></i>
                 </div>
-                <span 
-                  v-if="stats.comparison?.insights_growth_pct !== null && stats.comparison?.insights_growth_pct !== undefined" 
-                  :class="stats.comparison.insights_growth_pct >= 0 ? 'text-purple-700 bg-purple-50 border-purple-200' : 'text-slate-600 bg-slate-100 border-slate-200'"
-                  class="text-[11px] font-bold px-2 py-0.5 rounded-full border font-mono"
-                >
-                  {{ stats.comparison.insights_growth_pct >= 0 ? '+' : '' }}{{ stats.comparison.insights_growth_pct }}%
-                </span>
+                <div class="relative group/pct inline-flex items-center">
+                  <span 
+                    v-if="stats.comparison?.insights_growth_pct !== null && stats.comparison?.insights_growth_pct !== undefined" 
+                    :class="stats.comparison.insights_growth_pct >= 0 ? 'text-purple-700 bg-purple-50 border-purple-200' : 'text-slate-600 bg-slate-100 border-slate-200'"
+                    class="text-[11px] font-bold px-2 py-0.5 rounded-full border font-mono cursor-help"
+                    :title="stats.comparison?.comparison_label || '环比对比'"
+                  >
+                    {{ stats.comparison.insights_growth_pct >= 0 ? '+' : '' }}{{ stats.comparison.insights_growth_pct }}%
+                  </span>
+                  <!-- Floating tooltip popup on hover -->
+                  <div 
+                    v-if="stats.comparison?.comparison_label"
+                    class="pointer-events-none absolute bottom-full mb-1.5 right-0 hidden group-hover/pct:flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/95 text-white text-[11px] rounded-md shadow-xl whitespace-nowrap z-50 font-normal transition-all duration-150"
+                  >
+                    <i class="fa-solid fa-clock-rotate-left text-[10px] text-slate-400"></i>
+                    <span>{{ stats.comparison.comparison_label }}</span>
+                    <div class="absolute top-full right-3 -mt-1 border-4 border-transparent border-t-slate-900/95"></div>
+                  </div>
+                </div>
               </div>
               <div>
-                <p class="text-xs text-slate-500 font-medium">需求洞察与推送</p>
-                <p class="text-2xl font-bold text-slate-800 tracking-tight">{{ stats.total_insights || 0 }}</p>
-                <p class="text-[11px] text-slate-400 mt-1">5W1H 事实 · 飞书多维表格同步</p>
+                <p class="text-xs text-slate-500 font-medium">需求洞察提炼</p>
+                <p class="text-2xl font-bold text-slate-800 tracking-tight">{{ (stats.total_insights || 0).toLocaleString() }}</p>
+                <p class="text-[11px] text-slate-400 mt-1">已推送 {{ stats.total_pushed_insights || 0 }} 条 · 5W1H 事实核验</p>
               </div>
             </div>
 
@@ -2792,7 +2874,7 @@
           <!-- Middle Row: Realtime Algorithmic Data Briefing & LLM Token Observability -->
           <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <!-- Left 2 Cols: Realtime Operational Briefing & Activity Trends -->
-            <div class="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4 min-w-0 overflow-hidden flex flex-col justify-between">
+            <div class="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4 min-w-0 overflow-hidden flex flex-col justify-between h-full">
               <!-- Header with KPI Indicators & View Mode Controls -->
               <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
                 <div class="flex items-center gap-2.5">
@@ -3015,7 +3097,7 @@
             </div>
 
             <!-- Right 1 Col: LLM Token & Resource Observability (Enhanced) -->
-            <div class="bg-gradient-to-b from-slate-900 to-indigo-950 text-white rounded-xl shadow-lg p-5 flex flex-col justify-between space-y-4 min-w-0">
+            <div class="bg-gradient-to-b from-slate-900 to-indigo-950 text-white rounded-xl shadow-lg p-5 flex flex-col justify-between space-y-4 min-w-0 h-full">
               <div class="space-y-3.5">
                 <!-- Header -->
                 <div class="flex items-center justify-between border-b border-white/10 pb-2.5">
@@ -3023,54 +3105,80 @@
                     <i class="fa-solid fa-microchip"></i> 算力与模型服务大盘
                   </span>
                   <div class="flex items-center gap-2">
-                    <span class="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-400/30 flex items-center gap-1.5">
+                    <span class="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-400/30 flex items-center gap-1.5" title="系统每3秒自动静默刷新算力指标">
                       <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                      <span>实时监测</span>
+                      <span>实时监测 (3s 轮询)</span>
                     </span>
-                    <button @click="loadStats(null)" class="text-[10px] text-indigo-300 hover:text-white transition cursor-pointer flex items-center gap-1" title="刷新指标">
+                    <button @click="loadStats(null)" class="text-[10px] text-indigo-300 hover:text-white transition cursor-pointer flex items-center gap-1" title="立即刷新指标">
                       <i class="fa-solid fa-arrows-rotate text-[9px]"></i>
                     </button>
                   </div>
                 </div>
 
-                <!-- Cumulative Total Tokens -->
+                <!-- Cumulative Total Tokens -> Linked with Hourly / Daily Tab -->
                 <div>
                   <div class="flex items-center justify-between">
-                    <p class="text-xs text-slate-400">大模型累积总消耗</p>
+                    <p class="text-xs text-slate-400">
+                      {{ tokenTrendViewMode === 'hourly' ? '今日大模型 Token 消耗' : '近7天大模型 Token 消耗' }}
+                    </p>
                     <span v-if="stats.token_usage?.active_model" class="text-[10px] font-mono text-indigo-200 bg-white/10 px-2 py-0.5 rounded truncate max-w-[150px]" :title="'当前默认模型: ' + stats.token_usage.active_model">
                       ⚡ {{ stats.token_usage.active_model }}
                     </span>
                   </div>
                   <div class="flex items-baseline justify-between mt-1">
                     <p class="text-3xl font-extrabold text-white tracking-tight">
-                      {{ (stats.token_usage?.total_tokens || 0).toLocaleString() }}
+                      {{ (currentTokenScope.total_tokens || 0).toLocaleString() }}
                       <span class="text-xs font-normal text-indigo-300 ml-1">Tokens</span>
                     </p>
                     <div class="text-[11px] font-mono text-slate-300 flex items-center gap-2.5">
-                      <span title="输入 Prompt Token">入: <b class="text-white">{{ (stats.token_usage?.prompt_tokens || 0).toLocaleString() }}</b></span>
+                      <span title="输入 Prompt Token">入: <b class="text-white">{{ (currentTokenScope.prompt_tokens || 0).toLocaleString() }}</b></span>
                       <span class="text-slate-600">|</span>
-                      <span title="生成 Output Token">出: <b class="text-white">{{ (stats.token_usage?.completion_tokens || 0).toLocaleString() }}</b></span>
+                      <span title="生成 Output Token">出: <b class="text-white">{{ (currentTokenScope.completion_tokens || 0).toLocaleString() }}</b></span>
                     </div>
                   </div>
                 </div>
 
-                <!-- Sparkline Trend Chart (分时间趋势小折线图) -->
-                <div class="bg-white/5 border border-white/10 rounded-xl p-3 space-y-1.5">
-                  <div class="flex items-center justify-between text-[11px]">
-                    <span class="text-slate-300 font-medium flex items-center gap-1">
-                      <i class="fa-solid fa-chart-line text-indigo-400 text-[10px]"></i> Token 消耗分时走势
+                <!-- Sparkline Trend Chart (分时走势 / 分天走势 一键切换) -->
+                <div class="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2">
+                  <div class="flex items-center justify-between gap-1">
+                    <span class="text-slate-300 font-medium text-[11px] flex items-center gap-1 truncate">
+                      <i class="fa-solid fa-chart-line text-indigo-400 text-[10px]"></i> 
+                      <span>Token 消耗走势 ({{ tokenTrendViewMode === 'hourly' ? '今日' : '近7天' }})</span>
                     </span>
-                    <span class="text-[10px] text-slate-400 font-mono" v-if="tokenTrendSparkline.hasData">
-                      峰值 {{ (tokenTrendSparkline.max || 0).toLocaleString() }} · 日均 {{ Math.round((tokenTrendSparkline.total || 0) / (stats.daily_trends?.length || 1)).toLocaleString() }} tok
-                    </span>
+                    
+                    <!-- View Mode Toggle Buttons -->
+                    <div class="flex items-center bg-black/25 rounded-lg p-0.5 text-[10px] font-medium border border-white/10">
+                      <button 
+                        @click="tokenTrendViewMode = 'hourly'"
+                        :class="tokenTrendViewMode === 'hourly' ? 'bg-indigo-600 text-white shadow-xs font-bold' : 'text-slate-400 hover:text-white'"
+                        class="px-2 py-0.5 rounded transition cursor-pointer"
+                        type="button"
+                      >
+                        分时走势
+                      </button>
+                      <button 
+                        @click="tokenTrendViewMode = 'daily'"
+                        :class="tokenTrendViewMode === 'daily' ? 'bg-indigo-600 text-white shadow-xs font-bold' : 'text-slate-400 hover:text-white'"
+                        class="px-2 py-0.5 rounded transition cursor-pointer"
+                        type="button"
+                      >
+                        分天走势
+                      </button>
+                    </div>
                   </div>
 
-                  <!-- SVG Sparkline -->
-                  <div class="w-full h-11 relative flex items-end">
-                    <svg v-if="tokenTrendSparkline.hasData" viewBox="0 0 240 48" preserveAspectRatio="none" class="w-full h-full overflow-visible">
+                  <!-- Peak & Average Indicators -->
+                  <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                    <span>峰值: <b class="text-indigo-200">{{ (tokenTrendSparkline.max || 0).toLocaleString() }}</b></span>
+                    <span>{{ tokenTrendViewMode === 'hourly' ? '时均' : '日均' }}: <b class="text-indigo-200">{{ (tokenTrendSparkline.avg || 0).toLocaleString() }}</b> tok</span>
+                  </div>
+
+                  <!-- SVG Sparkline with Floating Endpoint Tooltip -->
+                  <div class="w-full h-12 relative flex items-end">
+                    <svg v-if="tokenTrendSparkline.coords && tokenTrendSparkline.coords.length > 0" viewBox="0 0 240 48" preserveAspectRatio="none" class="w-full h-full overflow-visible">
                       <defs>
                         <linearGradient id="tokenSparklineGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                          <stop offset="0%" stop-color="#818cf8" stop-opacity="0.4" />
+                          <stop offset="0%" stop-color="#818cf8" stop-opacity="0.45" />
                           <stop offset="100%" stop-color="#818cf8" stop-opacity="0.0" />
                         </linearGradient>
                       </defs>
@@ -3081,19 +3189,44 @@
                         :key="idx" 
                         :cx="pt.x" 
                         :cy="pt.y" 
-                        r="2.5" 
-                        class="fill-indigo-300 hover:fill-amber-300 transition-all cursor-pointer"
+                        :r="hoveredTokenPoint === pt ? 3.5 : 2" 
+                        stroke="transparent"
+                        stroke-width="8"
+                        @mouseenter="hoveredTokenPoint = pt"
+                        @mouseleave="hoveredTokenPoint = null"
+                        class="fill-indigo-300 hover:fill-amber-300 transition-colors cursor-pointer"
                       >
-                        <title>{{ pt.date }}: {{ (pt.val || 0).toLocaleString() }} Tokens</title>
                       </circle>
                     </svg>
                     <div v-else class="w-full h-full flex items-center justify-center text-[10px] text-slate-500 font-mono">
-                      当前周期内暂无分时消耗数据
+                      暂无消耗走势数据
+                    </div>
+
+                    <!-- Floating Tooltip near endpoint (跟随端点展示，绝对定位，绝不引发折线图抖动) -->
+                    <div 
+                      v-if="hoveredTokenPoint" 
+                      :style="getTokenTooltipStyle(hoveredTokenPoint)"
+                      class="absolute z-30 pointer-events-none px-2.5 py-1 bg-slate-900/95 text-indigo-100 text-[10px] rounded-lg shadow-xl border border-indigo-500/50 backdrop-blur-md whitespace-nowrap transition-all duration-75"
+                    >
+                      <div class="font-mono flex items-center gap-1.5 leading-tight">
+                        <span class="text-indigo-300 font-semibold">{{ tokenTrendViewMode === 'hourly' ? '今日 ' + hoveredTokenPoint.label : hoveredTokenPoint.label }}</span>
+                        <span class="text-white font-bold">{{ (hoveredTokenPoint.val || 0).toLocaleString() }} Tokens</span>
+                        <span v-if="hoveredTokenPoint.runs_count" class="text-slate-400 font-normal">({{ hoveredTokenPoint.runs_count }} 次)</span>
+                      </div>
                     </div>
                   </div>
+
+                  <!-- Fixed X-Axis Range (始终保持占位，避免布局抖动) -->
                   <div class="flex items-center justify-between text-[9px] text-slate-400 font-mono pt-0.5">
-                    <span>{{ stats.daily_trends?.[0]?.date?.slice(5) || '-' }}</span>
-                    <span>{{ stats.daily_trends?.[stats.daily_trends.length - 1]?.date?.slice(5) || '-' }}</span>
+                    <template v-if="tokenTrendViewMode === 'hourly'">
+                      <span>00:00</span>
+                      <span>12:00</span>
+                      <span>23:00</span>
+                    </template>
+                    <template v-else>
+                      <span>{{ stats.token_usage?.token_daily_trend?.[0]?.date?.slice(5) || stats.daily_trends?.[0]?.date?.slice(5) || '-' }}</span>
+                      <span>{{ stats.token_usage?.token_daily_trend?.[stats.token_usage.token_daily_trend.length - 1]?.date?.slice(5) || stats.daily_trends?.[stats.daily_trends.length - 1]?.date?.slice(5) || '-' }}</span>
+                    </template>
                   </div>
                 </div>
 
@@ -3101,20 +3234,20 @@
                 <div class="space-y-1.5">
                   <div class="flex items-center justify-between text-[11px] text-slate-300 font-medium">
                     <span class="flex items-center gap-1">
-                      <i class="fa-solid fa-layer-group text-purple-400 text-[10px]"></i> 具体模型消耗细分
+                      <i class="fa-solid fa-layer-group text-purple-400 text-[10px]"></i> 具体模型消耗细分 ({{ tokenTrendViewMode === 'hourly' ? '今日24h' : '近7天' }})
                     </span>
-                    <span class="text-[10px] text-slate-400">已调度 {{ (stats.token_usage?.models_breakdown || []).length }} 种模型</span>
+                    <span class="text-[10px] text-slate-400">已调度 {{ (currentTokenScope.models_breakdown || []).length }} 种模型</span>
                   </div>
 
-                  <div class="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+                  <div class="space-y-1.5 max-h-28 overflow-y-auto scrollbar-dark pr-1">
                     <div 
-                      v-for="modelItem in (stats.token_usage?.models_breakdown || [])" 
-                      :key="modelItem.model_name" 
+                      v-for="modelItem in (currentTokenScope.models_breakdown || [])" 
+                      :key="modelItem.model_name || modelItem.model" 
                       class="bg-white/5 hover:bg-white/10 transition rounded-lg p-2 border border-white/10 text-xs space-y-1"
                     >
                       <div class="flex items-center justify-between">
-                        <span class="font-mono text-[11px] font-bold text-indigo-200 truncate max-w-[160px]" :title="modelItem.model_name">
-                          {{ modelItem.model_name }}
+                        <span class="font-mono text-[11px] font-bold text-indigo-200 truncate max-w-[160px]" :title="modelItem.model_name || modelItem.model">
+                          {{ modelItem.model_name || modelItem.model }}
                         </span>
                         <div class="flex items-center gap-1.5 font-mono text-[11px]">
                           <span class="font-bold text-white">{{ (modelItem.total_tokens || 0).toLocaleString() }}</span>
@@ -3125,12 +3258,12 @@
                         <div class="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
                           <div class="h-full bg-gradient-to-r from-indigo-400 to-purple-400 rounded-full" :style="{ width: Math.min(100, Math.max(modelItem.percentage || 0, 4)) + '%' }"></div>
                         </div>
-                        <span class="text-[9px] text-slate-400 font-mono whitespace-nowrap">{{ modelItem.call_count || 0 }} 次调用</span>
+                        <span class="text-[9px] text-slate-400 font-mono whitespace-nowrap">{{ modelItem.call_count || modelItem.runs_count || 0 }} 次调用</span>
                       </div>
                     </div>
 
-                    <div v-if="!stats.token_usage?.models_breakdown || stats.token_usage.models_breakdown.length === 0" class="text-slate-500 text-[10px] py-1 text-center">
-                      暂无多模型消耗明细
+                    <div v-if="!currentTokenScope.models_breakdown || currentTokenScope.models_breakdown.length === 0" class="text-slate-500 text-[10px] h-11 flex items-center justify-center font-mono">
+                      {{ tokenTrendViewMode === 'hourly' ? '今日暂无模型调用记录' : '近7天暂无模型调用记录' }}
                     </div>
                   </div>
                 </div>
@@ -3138,14 +3271,14 @@
                 <!-- Health KPIs: Request Count, Speed, Latency -->
                 <div class="grid grid-cols-2 gap-2 pt-0.5">
                   <div class="bg-indigo-900/30 p-2.5 rounded-lg border border-indigo-500/30">
-                    <p class="text-[10px] text-indigo-300 font-medium">模型请求总次数</p>
+                    <p class="text-[10px] text-indigo-300 font-medium">模型请求总次数 ({{ tokenTrendViewMode === 'hourly' ? '今日' : '近7天' }})</p>
                     <p class="text-base font-bold text-white mt-0.5 font-mono">
-                      {{ stats.token_usage?.analysis_runs_count || 0 }} <span class="text-[10px] font-normal text-indigo-300">次</span>
+                      {{ currentTokenScope.analysis_runs_count || 0 }} <span class="text-[10px] font-normal text-indigo-300">次</span>
                     </p>
-                    <p class="text-[9px] text-emerald-300 mt-0.5">成功率 {{ stats.token_usage?.success_rate || 100 }}%</p>
+                    <p class="text-[9px] text-emerald-300 mt-0.5">成功率 {{ currentTokenScope.success_rate || 100 }}%</p>
                   </div>
                   <div class="bg-indigo-900/30 p-2.5 rounded-lg border border-indigo-500/30">
-                    <p class="text-[10px] text-indigo-300 font-medium">Token 吐字速度</p>
+                    <p class="text-[10px] text-indigo-300 font-medium">Token 吐字速度 (最近请求实测)</p>
                     <p class="text-base font-bold text-emerald-300 mt-0.5 font-mono flex items-center gap-1">
                       <span>{{ stats.token_usage?.tokens_per_second || 0 }}</span>
                       <span class="text-[10px] font-normal text-indigo-200">tok/s</span>
@@ -3156,109 +3289,350 @@
               </div>
 
               <!-- Bottom: Chinese Feature Calls Breakdown (简体中文功能名称) -->
-              <div class="pt-2.5 border-t border-white/10 space-y-1.5">
+              <div class="pt-2.5 border-t border-white/10 space-y-1.5 flex-shrink-0">
                 <div class="flex items-center justify-between text-[11px] text-slate-400">
                   <span class="font-medium text-slate-300 flex items-center gap-1">
-                    <i class="fa-solid fa-list-check text-indigo-400 text-[10px]"></i> 功能调用明细 (精确中文业务分类):
+                    <i class="fa-solid fa-list-check text-indigo-400 text-[10px]"></i> 功能调用明细 ({{ tokenTrendViewMode === 'hourly' ? '今日' : '近7天' }}精确中文业务分类):
+                  </span>
+                  <span v-if="currentTokenScope.run_types_breakdown && currentTokenScope.run_types_breakdown.length > 2" class="text-[9px] text-indigo-300/80 font-mono flex items-center gap-0.5" title="超过双行支持在信息框内上下滑动查看">
+                    <i class="fa-solid fa-arrows-up-down text-[8px]"></i> 滑动查看
                   </span>
                 </div>
-                <div class="flex flex-wrap gap-1.5 text-[10px]">
-                  <span 
-                    v-for="(cnt, featName) in (stats.token_usage?.runs_by_feature && Object.keys(stats.token_usage.runs_by_feature).length > 0 ? stats.token_usage.runs_by_feature : (stats.token_usage?.runs_by_type || {}))" 
-                    :key="featName" 
-                    class="bg-white/10 border border-white/10 px-2 py-0.5 rounded text-indigo-200 flex items-center gap-1"
-                  >
-                    <span class="text-slate-300">{{ featName }}:</span>
-                    <b class="text-white font-mono">{{ cnt }} 次</b>
-                  </span>
-                  <span v-if="(!stats.token_usage?.runs_by_feature || Object.keys(stats.token_usage.runs_by_feature).length === 0) && (!stats.token_usage?.runs_by_type || Object.keys(stats.token_usage.runs_by_type).length === 0)" class="text-slate-500 text-[10px]">
-                    暂无细分调用记录
-                  </span>
+                <div class="flex flex-wrap gap-1.5 text-[10px] h-[54px] min-h-[54px] max-h-[54px] overflow-y-auto scrollbar-dark content-start pr-1">
+                  <template v-if="currentTokenScope.run_types_breakdown && currentTokenScope.run_types_breakdown.length > 0">
+                    <span 
+                      v-for="item in currentTokenScope.run_types_breakdown" 
+                      :key="item.run_type" 
+                      class="bg-white/10 hover:bg-white/15 border border-white/10 px-2 py-0.5 rounded text-indigo-200 flex items-center gap-1.5 transition select-none flex-shrink-0"
+                    >
+                      <i :class="item.icon + ' text-indigo-300 text-[9px]'"></i>
+                      <span class="text-slate-300">{{ item.name_zh }}:</span>
+                      <b class="text-white font-mono">{{ item.count }} 次</b>
+                      <span v-if="item.percentage" class="text-[9px] text-indigo-300 font-mono">({{ item.percentage }}%)</span>
+                    </span>
+                  </template>
+                  <template v-else-if="currentTokenScope.runs_by_feature && Object.keys(currentTokenScope.runs_by_feature).length > 0">
+                    <span 
+                      v-for="(cnt, featName) in currentTokenScope.runs_by_feature" 
+                      :key="featName" 
+                      class="bg-white/10 border border-white/10 px-2 py-0.5 rounded text-indigo-200 flex items-center gap-1 select-none flex-shrink-0"
+                    >
+                      <span class="text-slate-300">{{ featName }}:</span>
+                      <b class="text-white font-mono">{{ cnt }} 次</b>
+                    </span>
+                  </template>
+                  <template v-else>
+                    <div class="w-full h-full flex items-center">
+                      <span class="text-slate-500 text-[10px] font-mono">
+                        {{ tokenTrendViewMode === 'hourly' ? '今日暂无细分调用记录' : '近7天暂无细分调用记录' }}
+                      </span>
+                    </div>
+                  </template>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- Recent Pushed Insights to Feishu Bitable Table (原知识库高频与重点主题升级) -->
-          <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
-            <div class="flex items-center justify-between">
+          <!-- Recent Pushed Insights to Feishu Bitable Table (全景高价值需求洞察与飞书多维表格推送) -->
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+            <div class="flex items-center justify-between pb-2 border-b border-slate-100">
               <div>
                 <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
-                  <i class="fa-solid fa-share-from-square text-indigo-600"></i>
-                  最近推送至飞书多维表格的需求洞察 (Recent Feishu Bitable Pushes)
+                  <i class="fa-solid fa-cloud-arrow-up text-indigo-600"></i>
+                  <span>最近推送至飞书多维表格的需求洞察</span>
+                  <span class="text-xs font-normal text-slate-400 font-mono">({{ recentBitablePushes.length }})</span>
+                  <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200/80 shadow-2xs">
+                    <i class="fa-regular fa-calendar text-[10px]"></i>
+                    {{ analyticsPeriod === 'today' ? '今日' : (analyticsPeriod === '7d' ? '近 7 天' : (analyticsPeriod === '30d' ? '近 30 天' : '全周期历史')) }}
+                  </span>
                 </h3>
-                <p class="text-xs text-slate-500 mt-0.5">展示已同步推送至飞书多维表格跟踪流转的最新高价值需求洞察</p>
+                <p class="text-xs text-slate-500 mt-0.5">展示当前统计周期内已实际推送到飞书多维表格跟踪流转的高价值需求洞察，严格基于推送流转行为审计，支持 5W1H 事实溯源与一键再次同步</p>
               </div>
-              <button @click="switchTab('insights')" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer flex items-center gap-1">
-                <span>进入需求洞察与推送</span>
-                <i class="fa-solid fa-arrow-right text-[11px]"></i>
-              </button>
+              <div class="flex items-center gap-3">
+                <button @click="loadRecentBitablePushes()" class="px-2.5 py-1 text-xs text-slate-600 hover:text-indigo-600 bg-slate-50 hover:bg-slate-100 rounded-lg border border-slate-200 transition cursor-pointer flex items-center gap-1.5 shadow-2xs" title="刷新最近推送列表">
+                  <i class="fa-solid fa-rotate-right text-[11px]"></i>
+                  <span>刷新</span>
+                </button>
+                <button @click="switchTab('insights')" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer flex items-center gap-1">
+                  <span>进入需求洞察与推送</span>
+                  <i class="fa-solid fa-arrow-right text-[11px]"></i>
+                </button>
+              </div>
             </div>
             
             <div class="overflow-x-auto rounded-xl border border-slate-200/80">
               <table class="w-full text-left text-sm text-slate-600">
                 <thead class="bg-slate-50 text-xs uppercase text-slate-500 font-semibold border-b border-slate-200">
                   <tr>
-                    <th class="py-3 px-4 min-w-[280px]">洞察标题</th>
-                    <th class="py-3 px-4 w-40">所属模块</th>
-                    <th class="py-3 px-4 w-44">内容标签</th>
-                    <th class="py-3 px-3 w-28">反馈类型</th>
-                    <th class="py-3 px-3 w-28">严重级别</th>
-                    <th class="py-3 px-3 w-32">推送状态</th>
-                    <th class="py-3 px-4 w-36">推送时间</th>
-                    <th class="py-3 px-3 w-24">操作人</th>
+                    <th class="py-3 px-2 text-center w-8" title="展开历史推送审计记录">
+                      <i class="fa-solid fa-clock-rotate-left text-slate-400 text-[11px]"></i>
+                    </th>
+                    <th class="py-3 px-3 min-w-[110px]">所属模块</th>
+                    <th class="py-3 px-2.5 min-w-[95px]">反馈类型</th>
+                    <th class="py-3 px-3 min-w-[280px]">洞察标题与 5W1H 事实明细</th>
+                    <th class="py-3 px-2.5 min-w-[90px]">严重级别</th>
+                    <th class="py-3 px-2.5 min-w-[95px]">事实置信度</th>
+                    <th class="py-3 px-2.5 min-w-[95px]">社群状态</th>
+                    <th class="py-3 px-2.5 min-w-[120px]">
+                      <div class="flex items-center gap-1 text-slate-700">
+                        <i class="fa-regular fa-clock text-slate-400 text-[11px]"></i>
+                        <span>提炼时间</span>
+                      </div>
+                    </th>
+                    <th class="py-3 px-3 min-w-[105px]">推送状态</th>
+                    <th class="py-3 px-3 text-right min-w-[165px]">操作</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100 bg-white">
-                  <tr v-for="item in recentBitablePushes.slice(0, 8)" :key="item.id" class="hover:bg-slate-50/80 transition">
-                    <td class="py-3.5 px-4 font-semibold text-slate-800 leading-snug">
-                      {{ item.title }}
-                    </td>
-                    <td class="py-3.5 px-4">
-                      <span class="px-2.5 py-0.5 rounded-full bg-slate-100 text-xs font-medium text-slate-700">
-                        {{ item.module_zh || '综合交流' }}
-                      </span>
-                    </td>
-                    <td class="py-3.5 px-4">
-                      <div class="flex items-center gap-1 flex-wrap">
-                        <span v-for="(tag, idx) in (item.tags || []).slice(0, 2)" :key="idx" class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-medium">
-                          {{ tag }}
+                  <template v-for="ins in recentBitablePushes.slice(0, 8)" :key="ins.id">
+                    <tr class="hover:bg-slate-50/80 transition">
+                      <!-- 1. 展开/折叠历史推送溯源 -->
+                      <td class="py-3.5 px-2 text-center">
+                        <button 
+                          @click="togglePushHistory(ins.id)" 
+                          class="w-6 h-6 rounded-lg hover:bg-slate-200/70 text-slate-400 hover:text-slate-700 transition flex items-center justify-center cursor-pointer"
+                          :title="expandedPushInsightIds[ins.id] ? '收起历史' : ('展开推送历史 (' + (ins.push_history ? ins.push_history.length : (ins.push_count || 0)) + ' 次)')"
+                        >
+                          <i class="fa-solid fa-chevron-right text-[10px] transition-transform duration-200" :class="{ 'rotate-90 text-indigo-600': expandedPushInsightIds[ins.id] }"></i>
+                        </button>
+                      </td>
+
+                      <!-- 2. 所属模块与多级标签 -->
+                      <td class="py-3.5 px-3">
+                        <div class="space-y-1.5 min-w-[130px] max-w-[180px]">
+                          <!-- 设备机型角标（整合至此列） -->
+                          <div v-if="ins.device_model">
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-300/90 shadow-2xs" :title="'所属设备机型: ' + ins.device_model">
+                              <i class="fa-solid fa-guitar text-amber-600 text-[10px]"></i>
+                              <span>{{ ins.device_model }}</span>
+                            </span>
+                          </div>
+
+                          <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-semibold border border-indigo-100/80">
+                            <i class="fa-solid fa-layer-group text-[10px]"></i>
+                            {{ ins.module_zh || ins.module || '综合交流' }}
+                          </span>
+                          <div class="flex items-center gap-1 flex-wrap" v-if="ins.tags && ins.tags.length > 0">
+                            <span 
+                              v-for="(t, idx) in ins.tags.slice(0, 3)" 
+                              :key="idx" 
+                              class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-medium"
+                            >
+                              #{{ getTagZh(t) }}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+
+                      <!-- 3. 反馈类型 (中文化徽章) -->
+                      <td class="py-3.5 px-2.5">
+                        <span :class="getInsightTypeBadge(ins.insight_type)" class="px-2.5 py-1 rounded-lg text-xs font-semibold border flex items-center gap-1 w-max">
+                          {{ ins.type_label_zh || ins.type_zh || getTagZh(ins.insight_type) }}
                         </span>
-                      </div>
-                    </td>
-                    <td class="py-3.5 px-3">
-                      <span class="px-2 py-0.5 rounded text-xs font-semibold"
-                            :class="item.type_zh?.includes('需求') ? 'bg-amber-50 text-amber-700' : item.type_zh?.includes('缺陷') ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-700'">
-                        {{ item.type_zh || '功能需求' }}
-                      </span>
-                    </td>
-                    <td class="py-3.5 px-3">
-                      <span class="px-2 py-0.5 rounded text-xs font-semibold"
-                            :class="item.severity_zh?.includes('严重') || item.severity_zh?.includes('阻塞') ? 'bg-rose-50 text-rose-700' : 'bg-blue-50 text-blue-700'">
-                        {{ item.severity_zh || '一般缺陷' }}
-                      </span>
-                    </td>
-                    <td class="py-3.5 px-3">
-                      <span v-if="item.push_status === 'success'" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700">
-                        <i class="fa-solid fa-circle-check text-emerald-600 text-[10px]"></i>
-                        <span>已推送{{ item.push_count > 1 ? ' (' + item.push_count + '次)' : '' }}</span>
-                      </span>
-                      <span v-else class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700">
-                        <i class="fa-solid fa-circle-xmark text-rose-600 text-[10px]"></i>
-                        <span>失败</span>
-                      </span>
-                    </td>
-                    <td class="py-3.5 px-4 text-xs text-slate-500 font-mono">
-                      {{ formatDate(item.last_pushed_at) }}
-                    </td>
-                    <td class="py-3.5 px-3 text-xs text-slate-700">
-                      {{ item.last_operator || '系统' }}
-                    </td>
-                  </tr>
+                      </td>
+
+                      <!-- 4. 洞察标题与 5W1H 事实明细 -->
+                      <td class="py-3.5 px-3 min-w-[280px]">
+                        <div class="space-y-2">
+                          <!-- 标题与下钻链接 -->
+                          <div class="flex items-start justify-between gap-2">
+                            <div 
+                              class="font-bold text-slate-900 text-sm leading-snug hover:text-indigo-600 cursor-pointer transition inline-flex items-center gap-1.5 group flex-1" 
+                              @click="viewInsightEvidence(ins)"
+                              title="点击查看社群原声证据链与 5W1H 深度下钻"
+                            >
+                              <span>{{ ins.summary || ins.title }}</span>
+                              <i class="fa-solid fa-up-right-from-square text-[10px] text-slate-400 group-hover:text-indigo-600"></i>
+                            </div>
+                          </div>
+
+                          <!-- 5W1H 结构化展示卡片 -->
+                          <div class="p-2.5 bg-slate-50/90 rounded-xl border border-slate-200/70 text-xs space-y-1.5 shadow-2xs">
+                            <div v-if="(ins._parsed5W1H || parse5W1H(ins.description || ins.fact_5w1h)).length > 0" class="space-y-1.5">
+                              <div v-for="point in (ins._parsed5W1H || parse5W1H(ins.description || ins.fact_5w1h))" :key="point.key" class="flex items-start gap-1.5 leading-relaxed">
+                                <span class="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold shrink-0 mt-0.5" :class="get5W1HBadgeClass(point.color)">
+                                  <i :class="point.icon" class="text-[9px]"></i> {{ point.label }}
+                                </span>
+                                <span class="text-slate-700 flex-1 text-xs leading-relaxed">{{ point.text }}</span>
+                              </div>
+                            </div>
+                            <div v-else class="text-slate-600 whitespace-pre-line leading-relaxed text-xs">
+                              {{ ins.description || ins.fact_5w1h }}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      <!-- 5. 严重级别 (中文化徽章) -->
+                      <td class="py-3.5 px-2.5">
+                        <span :class="getInsightSeverityBadge(ins.severity)" class="px-2 py-1 rounded-lg text-xs border w-max block font-semibold">
+                          {{ ins.severity_label_zh || ins.severity_zh || ins.severity }}
+                        </span>
+                      </td>
+
+                      <!-- 6. 事实置信度 (科学置信度体系) -->
+                      <td class="py-3.5 px-2.5" :title="ins.confidence_reason">
+                        <div class="space-y-1.5">
+                          <div class="flex items-center justify-between text-xs">
+                            <span :class="getConfidenceBadge(ins.confidence_level)" class="px-1.5 py-0.2 rounded text-[10px] font-bold">
+                              {{ ins.confidence_level === 'high' ? '高置信' : (ins.confidence_level === 'medium' ? '中置信' : '低置信') }}
+                            </span>
+                            <span class="font-bold font-mono text-xs text-slate-700">
+                              {{ (((ins.factual_score !== null && ins.factual_score !== undefined) ? ins.factual_score : ins.confidence) * 100).toFixed(0) }}%
+                            </span>
+                          </div>
+                          <div class="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                            <div 
+                              class="h-1.5 rounded-full transition-all duration-300"
+                              :class="ins.confidence_level === 'high' ? 'bg-emerald-500' : (ins.confidence_level === 'medium' ? 'bg-amber-500' : 'bg-rose-500')"
+                              :style="{ width: (((ins.factual_score !== null && ins.factual_score !== undefined) ? ins.factual_score : ins.confidence) * 100) + '%' }"
+                            ></div>
+                          </div>
+                        </div>
+                      </td>
+
+                      <!-- 7. 社群状态 (中文化徽章) -->
+                      <td class="py-3.5 px-2.5">
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700">
+                          {{ ins.status_label_zh || ins.status_in_chat }}
+                        </span>
+                      </td>
+
+                      <!-- 8. 提炼时间 (时效展示) -->
+                      <td class="py-3.5 px-2.5 min-w-[120px]">
+                        <div class="space-y-0.5" :title="'提炼创建时间: ' + (ins.created_at ? formatDateTime(ins.created_at) : '-')">
+                          <div class="flex items-center gap-1.5 font-mono text-xs font-semibold text-slate-700 whitespace-nowrap">
+                            <i class="fa-regular fa-clock text-indigo-500 text-[11px]"></i>
+                            <span>{{ formatDateTime(ins.created_at) }}</span>
+                          </div>
+                          <div class="text-[11px] text-slate-400 pl-4 flex items-center gap-1">
+                            <span class="inline-block w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                            <span>{{ formatTimeAgo(ins.created_at) }}</span>
+                          </div>
+                        </div>
+                      </td>
+
+                      <!-- 9. 推送状态与时间 -->
+                      <td class="py-3.5 px-3">
+                        <div class="space-y-1">
+                          <div v-if="ins.push_status === 'success'" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <i class="fa-solid fa-circle-check text-emerald-600 text-[11px]"></i>
+                            <span>已推送{{ (ins.push_count || 1) > 1 ? ' (' + ins.push_count + '次)' : '' }}</span>
+                          </div>
+                          <div v-else-if="ins.push_status === 'failed'" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                            <i class="fa-solid fa-circle-xmark text-rose-600 text-[11px]"></i>
+                            <span>推送失败</span>
+                          </div>
+                          <div v-else class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                            <i class="fa-regular fa-clock text-slate-400 text-[11px]"></i>
+                            <span>待推送</span>
+                          </div>
+
+                          <p v-if="ins.last_pushed_at" class="text-[11px] text-slate-400 leading-none">
+                            {{ formatDate(ins.last_pushed_at) }}
+                          </p>
+                        </div>
+                      </td>
+
+                      <!-- 10. 操作列 (下钻与依据 + 推送飞书) -->
+                      <td class="py-3.5 px-3 text-right space-x-1.5 whitespace-nowrap">
+                        <!-- 5W1H 下钻按钮 -->
+                        <button 
+                          @click="viewInsightEvidence(ins)" 
+                          class="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 hover:text-indigo-700 text-xs font-medium rounded-lg border border-slate-200 shadow-2xs transition inline-flex items-center gap-1 cursor-pointer"
+                          title="查看该需求的 5W1H 事实结构与社群原始聊天证据链"
+                        >
+                          <i class="fa-solid fa-magnifying-glass-chart text-indigo-600"></i>
+                          <span>下钻依据</span>
+                        </button>
+
+                        <!-- 单条推送至飞书多维表格按钮 -->
+                        <button 
+                          @click="pushInsightToBitable(ins.id)" 
+                          :disabled="isPushingInsight === ins.id"
+                          class="px-2.5 py-1 text-xs font-semibold rounded-lg border transition inline-flex items-center gap-1 shadow-2xs cursor-pointer"
+                          :class="ins.push_status === 'success' ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200' : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200'"
+                          :title="ins.push_status === 'success' ? '再次推送到飞书多维表格并追加一条版本记录' : '推送到飞书多维表格'"
+                        >
+                          <i v-if="isPushingInsight === ins.id" class="fa-solid fa-spinner fa-spin"></i>
+                          <i v-else :class="ins.push_status === 'success' ? 'fa-solid fa-rotate-right' : 'fa-solid fa-paper-plane'"></i>
+                          <span>{{ isPushingInsight === ins.id ? '推送中...' : (ins.push_status === 'success' ? '再次推送' : '推送到飞书') }}</span>
+                        </button>
+                      </td>
+                    </tr>
+
+                    <!-- 展开手风琴：历史推送记录溯源面板 -->
+                    <tr v-if="expandedPushInsightIds[ins.id]" class="bg-slate-50/90 border-b border-slate-200">
+                      <td colspan="10" class="p-4 pl-12">
+                        <div class="bg-white rounded-xl border border-slate-200 p-4 space-y-3 shadow-2xs">
+                          <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-800 flex items-center gap-2">
+                              <i class="fa-solid fa-clock-rotate-left text-indigo-600"></i>
+                              历史推送记录溯源（该需求历次推送审计）
+                            </span>
+                            <span class="text-xs text-slate-400 font-medium">累计推送 {{ ins.push_history ? ins.push_history.length : (ins.push_count || 0) }} 次</span>
+                          </div>
+
+                          <div v-if="ins.push_history && ins.push_history.length > 0" class="overflow-x-auto">
+                            <table class="w-full text-xs text-left text-slate-600">
+                              <thead class="bg-slate-50 text-[11px] uppercase font-semibold text-slate-500 border-y border-slate-100">
+                                <tr>
+                                  <th class="py-2 px-3">序号</th>
+                                  <th class="py-2 px-3">推送时间</th>
+                                  <th class="py-2 px-3">操作人</th>
+                                  <th class="py-2 px-3">目标平台</th>
+                                  <th class="py-2 px-3">HTTP状态</th>
+                                  <th class="py-2 px-3">推送结果</th>
+                                  <th class="py-2 px-3">响应 / 结果备注</th>
+                                </tr>
+                              </thead>
+                              <tbody class="divide-y divide-slate-100">
+                                <tr v-for="(rec, rIdx) in ins.push_history" :key="rec.record_id || rIdx" class="hover:bg-slate-50">
+                                  <td class="py-2 px-3 font-mono text-slate-400">#{{ ins.push_history.length - rIdx }}</td>
+                                  <td class="py-2 px-3 font-mono text-slate-700">{{ formatDate(rec.created_at) }}</td>
+                                  <td class="py-2 px-3 text-slate-800 font-medium">{{ rec.operator || '系统管理员' }}</td>
+                                  <td class="py-2 px-3">
+                                    <span class="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-[11px] font-medium">飞书多维表格</span>
+                                  </td>
+                                  <td class="py-2 px-3 font-mono">
+                                    <span :class="rec.status_code === 200 ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'">{{ rec.status_code || '-' }}</span>
+                                  </td>
+                                  <td class="py-2 px-3">
+                                    <span v-if="rec.state === 'success'" class="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[11px] font-semibold">成功</span>
+                                    <span v-else class="px-2 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded text-[11px] font-semibold">失败</span>
+                                  </td>
+                                  <td class="py-2 px-3 text-slate-500 max-w-xs truncate" :title="rec.error_message || rec.response_body || '已成功写入飞书多维表格'">
+                                    {{ rec.error_message || rec.response_body || '已成功写入飞书多维表格' }}
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                          
+                          <div v-else class="py-4 text-center text-xs text-slate-400 bg-slate-50 rounded-lg">
+                            暂无历史推送记录，可点击右侧「推送到飞书」按钮推送到飞书多维表格。
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
+
+                  <!-- Empty State -->
                   <tr v-if="recentBitablePushes.length === 0">
-                    <td colspan="8" class="py-10 text-center text-slate-400 space-y-1">
-                      <p class="text-xs">暂无飞书多维表格推送记录</p>
-                      <p class="text-[11px] text-slate-400">可在「需求洞察推送」或「洞察审核」中一键推送需求至多维表格</p>
+                    <td colspan="10" class="py-12 text-center text-slate-400 space-y-2">
+                      <div class="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto text-xl mb-1 shadow-2xs">
+                        <i class="fa-solid fa-cloud-arrow-up"></i>
+                      </div>
+                      <p class="text-sm font-semibold text-slate-700">当前统计周期（{{ analyticsPeriod === 'today' ? '今日' : (analyticsPeriod === '7d' ? '近 7 天' : (analyticsPeriod === '30d' ? '近 30 天' : '全周期历史')) }}）内暂无飞书多维表格推送记录</p>
+                      <p class="text-xs text-slate-400 max-w-md mx-auto">
+                        全景概览仅展示实际发生过流转推送的需求。您可以在「需求洞察与推送」中一键将高价值需求同步至飞书多维表格，或切换统计周期查看历史流转记录。
+                      </p>
+                      <div class="pt-2">
+                        <button @click="switchTab('insights')" class="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-lg border border-indigo-200 transition inline-flex items-center gap-1.5 cursor-pointer shadow-2xs">
+                          <i class="fa-solid fa-arrow-right text-[11px]"></i>
+                          <span>前往「需求洞察与推送」流转中心</span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 </tbody>
@@ -3318,9 +3692,10 @@
           </div>
 
           <!-- Section 1: Active Running Tasks Monitor -->
-          <div class="space-y-4">
+          <div id="active-tasks-monitor" class="space-y-4">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2.5">
+
                 <div class="w-2.5 h-2.5 rounded-full bg-indigo-600"></div>
                 <h3 class="font-bold text-slate-900 text-base">当前实时作业监控 (Active Task Live Monitor)</h3>
               </div>
@@ -3636,9 +4011,278 @@
                   </div>
                 </div>
 
+                <!-- Pathway 3: Scheduled Autonomous Pipeline Configuration -->
+                <div class="space-y-4 pt-4 border-t border-slate-200">
+                  <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div class="space-y-0.5">
+                      <div class="flex items-center gap-2">
+                        <span class="px-2 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-bold rounded-md uppercase tracking-wider">无人监管定时调度</span>
+                        <h4 class="font-bold text-sm text-slate-900 flex items-center gap-1.5">
+                          <i class="fa-solid fa-clock-rotate-left text-indigo-600"></i>
+                          <span>⏰ 定期自动化任务配置 (Scheduled Pipeline)</span>
+                        </h4>
+                      </div>
+                      <p class="text-xs text-slate-500">
+                        勾选需要定期执行的任务，系统将在设定的周期到达时，严格按既定流水线顺序（1 ➔ 2 ➔ 3 ➔ 4）全自动执行至结束
+                      </p>
+                    </div>
+
+                    <!-- Enable Switch & Status Indicator -->
+                    <div class="flex items-center gap-3">
+                      <div class="text-right">
+                        <span 
+                          :class="scheduledTaskConfig.enabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'"
+                          class="text-xs px-2.5 py-1 rounded-full border font-semibold inline-flex items-center gap-1.5"
+                        >
+                          <span :class="scheduledTaskConfig.enabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'" class="w-2 h-2 rounded-full inline-block"></span>
+                          <span>{{ scheduledTaskConfig.enabled ? '定时调度已开启' : '定时调度已停用' }}</span>
+                        </span>
+                      </div>
+                      <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" v-model="scheduledTaskConfig.enabled" class="sr-only peer" />
+                        <div class="w-11 h-6 bg-slate-200 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                      </label>
+                    </div>
+                  </div>
+
+                  <!-- Scheduled Pipeline Settings Container -->
+                  <div class="p-5 rounded-2xl bg-gradient-to-br from-slate-50 to-indigo-50/40 border border-slate-200 shadow-2xs space-y-5">
+                    
+                    <!-- 1. Step Checkboxes Matrix -->
+                    <div class="space-y-2.5">
+                      <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                          <i class="fa-solid fa-list-check text-indigo-600"></i>
+                          <span>步骤选择: 请勾选需要定期自动运行的单步任务 (可任意组合)</span>
+                        </span>
+                        <span class="text-[11px] text-indigo-600 font-medium">已选中 {{ scheduledTaskConfig.selected_steps.length }} 个任务阶段</span>
+                      </div>
+
+                      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div 
+                          v-for="stepItem in singleStepCatalog" 
+                          :key="stepItem.id"
+                          @click="toggleScheduledStep(stepItem.id)"
+                          :class="isStepSelectedInSchedule(stepItem.id) ? 'bg-white border-indigo-500 shadow-sm ring-1 ring-indigo-500' : 'bg-white/60 border-slate-200 opacity-75 hover:opacity-100 hover:border-slate-300'"
+                          class="p-3.5 rounded-xl border transition cursor-pointer flex flex-col justify-between space-y-2 select-none"
+                        >
+                          <div class="flex items-start justify-between gap-2">
+                            <div class="flex items-center gap-2 font-bold text-xs text-slate-800">
+                              <i :class="stepItem.icon + (isStepSelectedInSchedule(stepItem.id) ? ' text-indigo-600' : ' text-slate-400')"></i>
+                              <span>{{ stepItem.name }}</span>
+                            </div>
+                            <input 
+                              type="checkbox" 
+                              :checked="isStepSelectedInSchedule(stepItem.id)"
+                              class="rounded text-indigo-600 focus:ring-indigo-500 pointer-events-none mt-0.5"
+                            />
+                          </div>
+                          <p class="text-[11px] text-slate-500 leading-snug">{{ stepItem.desc }}</p>
+                        </div>
+                      </div>
+
+                      <!-- Strict Order Pipeline Flow Visualizer -->
+                      <div class="mt-2 p-3 bg-white rounded-xl border border-indigo-100/80 shadow-2xs space-y-2">
+                        <div class="flex items-center justify-between text-xs">
+                          <div class="flex items-center gap-1.5 font-bold text-slate-700">
+                            <i class="fa-solid fa-arrow-right-arrow-left text-indigo-600"></i>
+                            <span>严格执行顺序（无论勾选先后，底层均强制按既定流水线顺序依次运行）:</span>
+                          </div>
+                          <span v-if="scheduledTaskConfig.selected_steps.length === 0" class="text-[11px] text-rose-500 font-semibold flex items-center gap-1">
+                            <i class="fa-solid fa-circle-exclamation"></i> 请至少勾选一个任务
+                          </span>
+                        </div>
+
+                        <div v-if="orderedScheduledStepObjects.length > 0" class="flex flex-wrap items-center gap-2 pt-1">
+                          <template v-for="(stepObj, sIdx) in orderedScheduledStepObjects" :key="stepObj.id">
+                            <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-900 font-semibold text-xs shadow-2xs">
+                              <span class="w-4 h-4 rounded-full bg-indigo-600 text-white text-[10px] flex items-center justify-center font-bold">{{ sIdx + 1 }}</span>
+                              <i :class="stepObj.icon + ' text-indigo-600 text-xs'"></i>
+                              <span>{{ stepObj.name }}</span>
+                            </div>
+                            <div v-if="sIdx < orderedScheduledStepObjects.length - 1" class="text-indigo-400 font-bold text-xs flex items-center">
+                              <i class="fa-solid fa-chevron-right"></i>
+                            </div>
+                          </template>
+                        </div>
+                        <div v-else class="text-xs text-slate-400 py-1 italic">
+                          当前未勾选任何阶段，请在上方勾选需要自动运行的任务。
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 2. Schedule Period Configuration (Aligned with Feishu Bot) -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                      <!-- Sub-option 1: Interval & Type -->
+                      <div class="p-3.5 bg-white rounded-xl border border-slate-200 space-y-2.5">
+                        <label class="block text-xs font-bold text-slate-700">
+                          周期类型 (每 X 天/周/月)
+                        </label>
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-slate-500 font-medium">每</span>
+                          <input 
+                            v-model.number="scheduledTaskConfig.schedule_interval" 
+                            @input="onTaskScheduleChange"
+                            type="number" 
+                            min="1" 
+                            max="31" 
+                            class="w-16 text-xs px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-center font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500"
+                          />
+                          <select 
+                            v-model="scheduledTaskConfig.schedule_type" 
+                            @change="onTaskScheduleChange"
+                            class="flex-1 text-xs px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500"
+                          >
+                            <option value="day">天 (每天 / 每隔 X 天)</option>
+                            <option value="week">周 (每周 / 每隔 X 周)</option>
+                            <option value="month">月 (每月 / 每隔 X 月)</option>
+                          </select>
+                        </div>
+
+                        <!-- Contextual: Weekday -->
+                        <div v-if="scheduledTaskConfig.schedule_type === 'week'" class="pt-1 flex items-center gap-2">
+                          <span class="text-[11px] text-slate-500 font-medium">选定星期:</span>
+                          <select 
+                            v-model="scheduledTaskConfig.schedule_weekday" 
+                            @change="onTaskScheduleChange"
+                            class="flex-1 text-xs px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-md text-slate-700"
+                          >
+                            <option value="1">星期一 (周一)</option>
+                            <option value="2">星期二 (周二)</option>
+                            <option value="3">星期三 (周三)</option>
+                            <option value="4">星期四 (周四)</option>
+                            <option value="5">星期五 (周五)</option>
+                            <option value="6">星期六 (周六)</option>
+                            <option value="0">星期日 (周日)</option>
+                          </select>
+                        </div>
+
+                        <!-- Contextual: Month day -->
+                        <div v-if="scheduledTaskConfig.schedule_type === 'month'" class="pt-1 flex items-center gap-2">
+                          <span class="text-[11px] text-slate-500 font-medium">每月几号:</span>
+                          <select 
+                            v-model="scheduledTaskConfig.schedule_month_day" 
+                            @change="onTaskScheduleChange"
+                            class="flex-1 text-xs px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-md text-slate-700"
+                          >
+                            <option v-for="d in 28" :key="d" :value="String(d)">{{ d }} 号</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <!-- Sub-option 2: 24h Time & Presets -->
+                      <div class="p-3.5 bg-white rounded-xl border border-slate-200 space-y-2.5">
+                        <label class="block text-xs font-bold text-slate-700">
+                          触发时间 (24小时制 hh:mm)
+                        </label>
+                        <div class="flex items-center gap-2">
+                          <input 
+                            v-model="scheduledTaskConfig.schedule_time" 
+                            @input="onTaskScheduleChange"
+                            type="time" 
+                            class="flex-1 text-xs px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500"
+                          />
+                          <div class="inline-flex bg-slate-100 p-0.5 rounded-lg text-[10px]">
+                            <button 
+                              type="button" 
+                              @click="setTaskScheduleQuickTime('09:00')" 
+                              class="px-2 py-1 rounded hover:bg-white text-slate-700 transition font-medium"
+                              title="快捷设为 09:00"
+                            >
+                              09:00
+                            </button>
+                            <button 
+                              type="button" 
+                              @click="setTaskScheduleQuickTime('12:00')" 
+                              class="px-2 py-1 rounded hover:bg-white text-slate-700 transition font-medium"
+                              title="快捷设为 12:00"
+                            >
+                              12:00
+                            </button>
+                            <button 
+                              type="button" 
+                              @click="setTaskScheduleQuickTime('18:00')" 
+                              class="px-2 py-1 rounded hover:bg-white text-slate-700 transition font-medium"
+                              title="快捷设为 18:00"
+                            >
+                              18:00
+                            </button>
+                            <button 
+                              type="button" 
+                              @click="setTaskScheduleQuickTime('02:00')" 
+                              class="px-2 py-1 rounded hover:bg-white text-slate-700 transition font-medium"
+                              title="快捷设为 02:00 凌晨"
+                            >
+                              02:00
+                            </button>
+                          </div>
+                        </div>
+
+                        <!-- Cron Rule Summary Badge -->
+                        <div class="text-[11px] text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
+                          <div class="flex items-center gap-1.5 truncate">
+                            <i class="fa-solid fa-bullseye text-indigo-500"></i>
+                            <span>{{ scheduledTaskSummaryText }}</span>
+                          </div>
+                          <span class="font-mono text-[10px] text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200 ml-1">
+                            Cron: {{ scheduledTaskConfig.cron_expression }}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 3. Status Bar & Action Buttons -->
+                    <div class="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1 border-t border-slate-200/80">
+                      <div class="text-xs text-slate-500 flex flex-wrap items-center gap-3">
+                        <span v-if="scheduledTaskConfig.enabled && scheduledTaskConfig.next_run_at" class="flex items-center gap-1 text-indigo-700 font-medium">
+                          <i class="fa-solid fa-stopwatch text-indigo-500"></i>
+                          <span>下次预计执行: <b>{{ scheduledTaskConfig.next_run_at }}</b></span>
+                        </span>
+                        <span v-else-if="!scheduledTaskConfig.enabled" class="text-slate-400">
+                          (调度已暂停，开启后生效)
+                        </span>
+                        <span v-if="scheduledTaskConfig.last_run_at" class="flex items-center gap-1 text-slate-500">
+                          <span>上次触发: {{ scheduledTaskConfig.last_run_at }}</span>
+                          <span 
+                            :class="scheduledTaskConfig.last_status === 'completed' ? 'text-emerald-600 font-bold' : (scheduledTaskConfig.last_status === 'failed' ? 'text-rose-600 font-bold' : 'text-indigo-600')"
+                            class="text-[11px]"
+                          >
+                            ({{ scheduledTaskConfig.last_status === 'completed' ? '成功' : (scheduledTaskConfig.last_status === 'failed' ? '失败' : scheduledTaskConfig.last_status) }})
+                          </span>
+                        </span>
+                      </div>
+
+                      <div class="flex items-center gap-2.5 w-full sm:w-auto">
+                        <button 
+                          @click="saveScheduledTaskConfig" 
+                          :disabled="savingSchedule"
+                          class="flex-1 sm:flex-none px-4 py-2 bg-white hover:bg-slate-50 text-indigo-600 hover:text-indigo-700 border border-indigo-300 font-bold text-xs rounded-xl shadow-2xs transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+                          type="button"
+                        >
+                          <i :class="savingSchedule ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-floppy-disk'"></i>
+                          <span>{{ savingSchedule ? '保存中...' : '保存定期配置' }}</span>
+                        </button>
+
+                        <button 
+                          @click="triggerScheduledTaskNow" 
+                          :disabled="triggeringSchedule || pipelineLoading"
+                          class="flex-1 sm:flex-none px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+                          type="button"
+                          title="立即按当前勾选的任务和顺序执行一次链式流水线，方便无需等待定时器即可测试验证"
+                        >
+                          <i :class="triggeringSchedule ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-bolt'"></i>
+                          <span>{{ triggeringSchedule ? '启动中...' : '🚀 立即按定期配置测试执行' }}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+
               </div>
             </div>
           </div>
+
 
           <!-- Section 3: Task Execution History & Auditing -->
           <div class="space-y-4">
@@ -5040,15 +5684,138 @@
 
             <!-- VIEW 1: Distinct Deduplicated Clusters (推荐) -->
             <div v-if="episodeViewMode === 'clusters'" class="space-y-4">
+              <!-- Notice Banner -->
               <div class="p-3.5 bg-indigo-50/70 rounded-xl border border-indigo-100 flex items-center justify-between text-xs text-indigo-900">
                 <div class="flex items-center gap-2">
                   <i class="fa-solid fa-sparkles text-indigo-600 text-sm"></i>
-                  <span><b>语义差异化去重已生效：</b>已将类似的多群聊讨论（如音色卡加载、蓝牙配对、曲谱库需求等）归并为高内聚的差异化主题，点击卡片即刻查看对话。</span>
+                  <span><b>语义差异化去重已生效：</b>已将类似的多群聊讨论（如音色卡加载、蓝牙配对、曲谱库需求等）归并为高内聚的差异化主题，点击卡片或列表行即刻查看对话。</span>
                 </div>
                 <span class="font-mono text-indigo-700 font-bold whitespace-nowrap">{{ topicClusters.length }} 个去重主题</span>
               </div>
 
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- Topic Time Filter & View Mode Control Toolbar -->
+              <div class="bg-white p-3.5 px-4 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <!-- Left: Time Filter Section -->
+                  <div class="flex flex-wrap items-center gap-3">
+                    <span class="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <i class="fa-regular fa-calendar-days text-indigo-600"></i>
+                      <span>时间筛选：</span>
+                    </span>
+
+                    <!-- Time Type Tabs (初次讨论时间 vs 最新讨论时间) -->
+                    <div class="bg-slate-100 p-0.5 rounded-xl flex items-center border border-slate-200 text-xs font-semibold">
+                      <button 
+                        @click="setClusterTimeFilterType('first_discussed')"
+                        :class="clusterTimeFilterType === 'first_discussed' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-3 py-1.5 rounded-lg transition flex items-center gap-1.5"
+                        type="button"
+                        title="按聚合话题中最早发生的原始话题讨论时间筛选"
+                      >
+                        <i class="fa-solid fa-hourglass-start text-[11px] text-indigo-500"></i>
+                        <span>初次讨论时间</span>
+                      </button>
+                      <button 
+                        @click="setClusterTimeFilterType('last_discussed')"
+                        :class="clusterTimeFilterType === 'last_discussed' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-3 py-1.5 rounded-lg transition flex items-center gap-1.5"
+                        type="button"
+                        title="按聚合话题中最新更新的原始话题讨论时间筛选"
+                      >
+                        <i class="fa-regular fa-clock text-[11px] text-emerald-500"></i>
+                        <span>最新讨论时间</span>
+                      </button>
+                    </div>
+
+                    <!-- Date Presets -->
+                    <div class="flex items-center gap-1 text-xs">
+                      <button 
+                        v-for="p in clusterDatePresets" 
+                        :key="p.id"
+                        @click="applyClusterDatePreset(p.id)"
+                        :class="clusterDatePreset === p.id ? 'bg-indigo-600 text-white font-bold shadow-2xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200/60'"
+                        class="px-2.5 py-1 rounded-lg transition text-xs font-medium"
+                        type="button"
+                      >
+                        {{ p.label }}
+                      </button>
+                    </div>
+
+                    <!-- Date Range Inputs (YYYY-MM-DD) -->
+                    <div class="flex items-center gap-1.5 text-xs">
+                      <input 
+                        type="date" 
+                        v-model="clusterStartDate" 
+                        @change="onClusterDateInput"
+                        class="px-2.5 py-1 border border-slate-200 rounded-lg text-slate-700 font-mono text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-slate-50 hover:bg-white transition"
+                        title="开始日期"
+                      />
+                      <span class="text-slate-400">至</span>
+                      <input 
+                        type="date" 
+                        v-model="clusterEndDate" 
+                        @change="onClusterDateInput"
+                        class="px-2.5 py-1 border border-slate-200 rounded-lg text-slate-700 font-mono text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-slate-50 hover:bg-white transition"
+                        title="结束日期"
+                      />
+                      <button 
+                        v-if="clusterStartDate || clusterEndDate" 
+                        @click="clearClusterDateFilter"
+                        class="px-2 py-1 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition flex items-center gap-1"
+                        type="button"
+                        title="清空时间筛选"
+                      >
+                        <i class="fa-solid fa-xmark"></i>
+                        <span>清空</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Right: Layout Mode Toggle (Grid vs List) -->
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-slate-500 font-medium">展示布局：</span>
+                    <div class="bg-slate-100 p-0.5 rounded-xl flex items-center border border-slate-200 text-xs font-semibold">
+                      <button 
+                        @click="clusterViewLayout = 'grid'" 
+                        :class="clusterViewLayout === 'grid' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-2.5 py-1.5 rounded-lg transition flex items-center gap-1.5"
+                        type="button"
+                        title="卡片宫格模式"
+                      >
+                        <i class="fa-solid fa-grip"></i>
+                        <span>宫格模式</span>
+                      </button>
+                      <button 
+                        @click="clusterViewLayout = 'list'" 
+                        :class="clusterViewLayout === 'list' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'"
+                        class="px-2.5 py-1.5 rounded-lg transition flex items-center gap-1.5"
+                        type="button"
+                        title="表格列表模式"
+                      >
+                        <i class="fa-solid fa-list"></i>
+                        <span>列表模式</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Active Filter Indicator Line -->
+                <div v-if="clusterStartDate || clusterEndDate" class="flex items-center justify-between text-[11px] text-slate-500 pt-1.5 border-t border-slate-100">
+                  <div class="flex items-center gap-1.5">
+                    <span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                    <span>
+                      当前生效：按 <b>{{ clusterTimeFilterType === 'first_discussed' ? '初次讨论时间' : '最新讨论时间' }}</b> 筛选
+                      <span class="font-mono text-indigo-600 font-bold ml-1">[{{ clusterStartDate || '不限' }} ~ {{ clusterEndDate || '不限' }}]</span>
+                    </span>
+                  </div>
+                  <span class="font-medium text-slate-500">
+                    筛选命中：<b class="text-slate-800">{{ topicClusters.length }}</b> 个话题
+                  </span>
+                </div>
+              </div>
+
+              <!-- VIEW 1.1: Grid Cards (宫格模式) -->
+              <div v-if="clusterViewLayout === 'grid'" class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div 
                   v-for="cluster in topicClusters" 
                   :key="cluster.id" 
@@ -5082,7 +5849,7 @@
                       {{ cluster.canonical_title }}
                     </h4>
 
-                    <!-- Rich Summary Container (150-200 words) -->
+                    <!-- Rich Summary Container -->
                     <p class="text-xs text-slate-700 leading-relaxed bg-slate-50/80 p-3.5 rounded-xl border border-slate-100 font-normal">
                       {{ cluster.summary }}
                     </p>
@@ -5117,8 +5884,36 @@
                     </div>
                   </div>
 
-                  <div class="space-y-2 pt-2 border-t border-slate-100 text-xs text-slate-500">
-                    <div class="flex items-center justify-between text-[11px]">
+                  <div class="space-y-2.5 pt-2 border-t border-slate-100 text-xs">
+                    <!-- Time Information Badges: 初次讨论时间 & 最新讨论时间 -->
+                    <div class="grid grid-cols-2 gap-2 p-2 bg-slate-50/90 rounded-xl border border-slate-100">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span class="w-6 h-6 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center text-[10px] flex-shrink-0" title="初次讨论时间">
+                          <i class="fa-solid fa-hourglass-start"></i>
+                        </span>
+                        <div class="truncate">
+                          <p class="text-[10px] text-slate-400 font-medium">初次讨论时间</p>
+                          <p class="font-mono font-semibold text-slate-800 text-[11px] truncate" :title="formatDateTime(cluster.first_discussed_at || cluster.started_at)">
+                            {{ formatDateTime(cluster.first_discussed_at || cluster.started_at) }}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span class="w-6 h-6 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-[10px] flex-shrink-0" title="最新讨论时间">
+                          <i class="fa-regular fa-clock"></i>
+                        </span>
+                        <div class="truncate">
+                          <p class="text-[10px] text-slate-400 font-medium">最新讨论时间</p>
+                          <p class="font-mono font-semibold text-slate-800 text-[11px] truncate" :title="formatDateTime(cluster.last_discussed_at || cluster.ended_at)">
+                            {{ formatDateTime(cluster.last_discussed_at || cluster.ended_at) }}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Participants & Action Footer -->
+                    <div class="flex items-center justify-between text-[11px] text-slate-500">
                       <span class="truncate max-w-[70%]" :title="(cluster.participants || []).join('、')">
                         <i class="fa-solid fa-users mr-1 text-slate-400"></i>
                         <span class="text-slate-700 font-medium">{{ formatParticipantsList(cluster.participants) }}</span>
@@ -5132,15 +5927,225 @@
                 </div>
 
                 <div v-if="topicClusters.length === 0" class="col-span-2 py-16 text-center text-slate-400 space-y-2">
-                  <i class="fa-solid fa-layer-group text-3xl"></i>
-                  <p class="text-sm font-semibold">暂无去重话题记录</p>
-                  <p class="text-xs">请点击右上角「一键全链路自动化」处理数据</p>
+                  <i class="fa-solid fa-layer-group text-3xl text-slate-300"></i>
+                  <p class="text-sm font-semibold text-slate-600">暂无符合条件的去重话题</p>
+                  <p class="text-xs">可尝试切换初次/最新讨论时间类型，或调整时间筛选区间</p>
                 </div>
+              </div>
+
+              <!-- VIEW 1.2: Table List (列表模式) -->
+              <div v-else-if="clusterViewLayout === 'list'" class="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-2xs">
+                <table class="min-w-[1000px] w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr class="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                      <th class="py-3 px-4 w-[34%] min-w-[280px]">聚合话题与分类</th>
+                      <th class="py-3 px-4 whitespace-nowrap min-w-[130px]">初次讨论时间</th>
+                      <th class="py-3 px-4 whitespace-nowrap min-w-[130px]">最新讨论时间</th>
+                      <th class="py-3 px-4 text-center whitespace-nowrap min-w-[120px]">合并片段 / 消息</th>
+                      <th class="py-3 px-4 min-w-[120px] max-w-[180px]">涉及群聊</th>
+                      <th class="py-3 px-4 min-w-[120px] max-w-[180px]">核心发言人</th>
+                      <th class="py-3 px-4 text-center whitespace-nowrap min-w-[70px]">多模态</th>
+                      <th class="py-3 px-4 text-right whitespace-nowrap min-w-[90px]">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100">
+                    <tr 
+                      v-for="cluster in topicClusters" 
+                      :key="cluster.id"
+                      @click="openClusterMessages(cluster)"
+                      class="hover:bg-indigo-50/40 transition cursor-pointer group"
+                    >
+                      <!-- 1. Title & Taxonomy Tags -->
+                      <td class="py-3.5 px-4 min-w-[280px] max-w-md">
+                        <div class="space-y-1">
+                          <p class="font-bold text-slate-900 group-hover:text-indigo-600 transition leading-snug line-clamp-2">
+                            {{ cluster.canonical_title }}
+                          </p>
+                          <div class="flex flex-wrap items-center gap-1">
+                            <span 
+                              v-for="(t, tIdx) in (cluster.tags && cluster.tags.length > 0 ? cluster.tags : [getTagZh(cluster.category_hint)])" 
+                              :key="tIdx"
+                              :class="tIdx === 0 ? getTagColorClass(getTagInfo(cluster.category_hint).color) : 'bg-slate-100 text-slate-700 border border-slate-200'"
+                              class="px-2 py-0.2 rounded-full text-[10px] font-bold inline-flex items-center gap-1 shadow-2xs"
+                            >
+                              <span v-if="tIdx === 0" class="w-1 h-1 rounded-full bg-current"></span>
+                              <span>{{ getTagZh(t) }}</span>
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+
+                      <!-- 2. First Discussed At -->
+                      <td class="py-3.5 px-4 whitespace-nowrap font-mono text-slate-700">
+                        <div class="flex items-center gap-1.5">
+                          <i class="fa-solid fa-hourglass-start text-[10px] text-indigo-500"></i>
+                          <span>{{ formatDateTime(cluster.first_discussed_at || cluster.started_at) }}</span>
+                        </div>
+                      </td>
+
+                      <!-- 3. Last Discussed At -->
+                      <td class="py-3.5 px-4 whitespace-nowrap font-mono text-slate-700">
+                        <div class="flex items-center gap-1.5">
+                          <i class="fa-regular fa-clock text-[10px] text-emerald-500"></i>
+                          <span class="font-semibold">{{ formatDateTime(cluster.last_discussed_at || cluster.ended_at) }}</span>
+                        </div>
+                      </td>
+
+                      <!-- 4. Episode count & total messages -->
+                      <td class="py-3.5 px-4 text-center whitespace-nowrap">
+                        <div class="inline-flex items-center gap-1.5">
+                          <span class="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-xs font-semibold border border-amber-200/60 font-mono">
+                            {{ cluster.episode_count }} 个片段
+                          </span>
+                          <span class="px-2 py-0.5 rounded-md bg-slate-100 text-xs font-mono text-slate-700 font-medium">
+                            {{ cluster.total_messages }} 条
+                          </span>
+                        </div>
+                      </td>
+
+                      <!-- 5. Conversations -->
+                      <td class="py-3.5 px-4 max-w-[160px]">
+                        <p class="truncate text-slate-600 text-xs" :title="(cluster.conversations || []).join('、')">
+                          <i class="fa-solid fa-comments text-slate-400 mr-1"></i>
+                          <span>{{ (cluster.conversations || []).join('、') || '全社群' }}</span>
+                        </p>
+                      </td>
+
+                      <!-- 6. Participants -->
+                      <td class="py-3.5 px-4 max-w-[160px]">
+                        <p class="truncate text-slate-600 text-xs" :title="(cluster.participants || []).join('、')">
+                          <i class="fa-solid fa-users text-slate-400 mr-1"></i>
+                          <span>{{ formatParticipantsList(cluster.participants) }}</span>
+                        </p>
+                      </td>
+
+                      <!-- 7. Media Thumbnails -->
+                      <td class="py-3.5 px-4 text-center whitespace-nowrap">
+                        <span v-if="getClusterMediaIds(cluster).length > 0" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-xs font-semibold border border-indigo-100">
+                          <i class="fa-solid fa-image text-[10px]"></i>
+                          <span>{{ getClusterMediaIds(cluster).length }} 张</span>
+                        </span>
+                        <span v-else class="text-slate-400 text-xs">-</span>
+                      </td>
+
+                      <!-- 8. Actions -->
+                      <td class="py-3.5 px-4 text-right whitespace-nowrap">
+                        <button 
+                          @click.stop="openClusterMessages(cluster)"
+                          class="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white rounded-lg font-semibold transition text-xs flex items-center gap-1 ml-auto shadow-2xs group-hover:bg-indigo-600 group-hover:text-white"
+                          type="button"
+                        >
+                          <span>查看对话</span>
+                          <i class="fa-solid fa-chevron-right text-[10px]"></i>
+                        </button>
+                      </td>
+                    </tr>
+
+                    <tr v-if="topicClusters.length === 0">
+                      <td colspan="8" class="py-16 text-center text-slate-400 space-y-2">
+                        <i class="fa-solid fa-layer-group text-3xl text-slate-300"></i>
+                        <p class="text-sm font-semibold text-slate-600">暂无符合条件的去重话题</p>
+                        <p class="text-xs">可尝试切换初次/最新讨论时间类型，或调整时间筛选区间</p>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
 
             <!-- VIEW 2: Raw Segmented Episodes -->
             <div v-if="episodeViewMode === 'raw'" class="space-y-4">
+              <!-- Notice Banner -->
+              <div class="p-3.5 bg-amber-50/70 rounded-xl border border-amber-100 flex items-center justify-between text-xs text-amber-900">
+                <div class="flex items-center gap-2">
+                  <i class="fa-solid fa-list-ol text-amber-600 text-sm"></i>
+                  <span><b>原始切分片段：</b>展示大模型切分出的原始会话话题切片（未合并），点击卡片可查看该时段内的完整聊天记录与关联图片。</span>
+                </div>
+                <span class="font-mono text-amber-700 font-bold whitespace-nowrap">{{ episodeList.length }} 个切分片段</span>
+              </div>
+
+              <!-- Raw Episode Time Filter Control Toolbar -->
+              <div class="bg-white p-3.5 px-4 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <!-- Time Filter Controls -->
+                  <div class="flex flex-wrap items-center gap-3">
+                    <span class="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <i class="fa-regular fa-calendar-days text-amber-600"></i>
+                      <span>时间筛选：</span>
+                    </span>
+
+                    <!-- Time Type Badge (单一时间维度：话题讨论时间) -->
+                    <div class="bg-amber-50 px-3 py-1.5 rounded-xl border border-amber-200/70 text-xs font-bold text-amber-800 flex items-center gap-1.5 shadow-2xs">
+                      <i class="fa-regular fa-clock text-[11px] text-amber-600"></i>
+                      <span>话题讨论时间</span>
+                    </div>
+
+                    <!-- Date Presets -->
+                    <div class="flex items-center gap-1 text-xs">
+                      <button 
+                        v-for="p in rawEpisodeDatePresets" 
+                        :key="p.id"
+                        @click="applyRawEpisodeDatePreset(p.id)"
+                        :class="rawEpisodeDatePreset === p.id ? 'bg-amber-600 text-white font-bold shadow-2xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200/60'"
+                        class="px-2.5 py-1 rounded-lg transition text-xs font-medium"
+                        type="button"
+                      >
+                        {{ p.label }}
+                      </button>
+                    </div>
+
+                    <!-- Date Range Inputs (YYYY-MM-DD) -->
+                    <div class="flex items-center gap-1.5 text-xs">
+                      <input 
+                        type="date" 
+                        v-model="rawEpisodeStartDate" 
+                        @change="onRawEpisodeDateInput"
+                        class="px-2.5 py-1 border border-slate-200 rounded-lg text-slate-700 font-mono text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none bg-slate-50 hover:bg-white transition"
+                        title="开始日期"
+                      />
+                      <span class="text-slate-400">至</span>
+                      <input 
+                        type="date" 
+                        v-model="rawEpisodeEndDate" 
+                        @change="onRawEpisodeDateInput"
+                        class="px-2.5 py-1 border border-slate-200 rounded-lg text-slate-700 font-mono text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none bg-slate-50 hover:bg-white transition"
+                        title="结束日期"
+                      />
+                      <button 
+                        v-if="rawEpisodeStartDate || rawEpisodeEndDate" 
+                        @click="clearRawEpisodeDateFilter"
+                        class="px-2 py-1 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition flex items-center gap-1"
+                        type="button"
+                        title="清空时间筛选"
+                      >
+                        <i class="fa-solid fa-xmark"></i>
+                        <span>清空</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Count Info -->
+                  <div class="text-xs text-slate-500 font-medium">
+                    <span>共展示 <b>{{ episodeList.length }}</b> 个片段</span>
+                  </div>
+                </div>
+
+                <!-- Active Filter Indicator Line -->
+                <div v-if="rawEpisodeStartDate || rawEpisodeEndDate" class="flex items-center justify-between text-[11px] text-slate-500 pt-1.5 border-t border-slate-100">
+                  <div class="flex items-center gap-1.5">
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                    <span>
+                      当前生效：按 <b>话题讨论时间</b> 筛选
+                      <span class="font-mono text-amber-600 font-bold ml-1">[{{ rawEpisodeStartDate || '不限' }} ~ {{ rawEpisodeEndDate || '不限' }}]</span>
+                    </span>
+                  </div>
+                  <span class="font-medium text-slate-500">
+                    筛选命中：<b class="text-slate-800">{{ episodeList.length }}</b> 个片段
+                  </span>
+                </div>
+              </div>
+
+              <!-- Grid Cards -->
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div 
                   v-for="ep in episodeList" 
@@ -5170,7 +6175,7 @@
                       {{ ep.title }}
                     </h4>
 
-                    <!-- Rich Summary Container (150-200 words) -->
+                    <!-- Rich Summary Container -->
                     <p class="text-xs text-slate-700 leading-relaxed bg-slate-50/80 p-3.5 rounded-xl border border-slate-100 font-normal">
                       {{ ep.summary }}
                     </p>
@@ -5205,19 +6210,43 @@
                     </div>
                   </div>
 
-                  <div class="flex items-center justify-between text-xs text-slate-500 pt-2 border-t border-slate-100">
-                    <span>{{ ep.conversation_name || '群聊片段' }}</span>
-                    <span class="text-amber-600 font-semibold group-hover:translate-x-0.5 transition flex items-center gap-1">
-                      <span>{{ formatDate(ep.started_at) }} · 点击查看</span>
-                      <i class="fa-solid fa-arrow-right text-[10px]"></i>
-                    </span>
+                  <div class="space-y-2.5 pt-2 border-t border-slate-100 text-xs">
+                    <!-- Occurrence Time Badge -->
+                    <div class="p-2 bg-slate-50/90 rounded-xl border border-slate-100 flex items-center justify-between text-xs">
+                      <div class="flex items-center gap-2 text-slate-600 min-w-0">
+                        <span class="w-6 h-6 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center text-[10px] flex-shrink-0" title="讨论时间">
+                          <i class="fa-regular fa-clock"></i>
+                        </span>
+                        <div class="truncate">
+                          <p class="text-[10px] text-slate-400 font-medium">讨论时间</p>
+                          <p class="font-mono font-semibold text-slate-800 text-[11px] truncate" :title="formatDateTime(ep.started_at)">
+                            {{ formatDateTime(ep.started_at) }}
+                          </p>
+                        </div>
+                      </div>
+                      <span class="font-mono text-slate-400 text-[11px]">
+                        {{ ep.conversation_name || '群聊片段' }}
+                      </span>
+                    </div>
+
+                    <!-- Footer Action -->
+                    <div class="flex items-center justify-between text-xs text-slate-500">
+                      <span class="truncate max-w-[70%]" :title="(ep.participants || []).join('、')">
+                        <i class="fa-solid fa-users mr-1 text-slate-400"></i>
+                        <span class="text-slate-700 font-medium">{{ formatParticipantsList(ep.participants) }}</span>
+                      </span>
+                      <span class="text-amber-600 font-semibold group-hover:translate-x-0.5 transition flex items-center gap-1">
+                        <span>查看对话记录</span>
+                        <i class="fa-solid fa-arrow-right text-[10px]"></i>
+                      </span>
+                    </div>
                   </div>
                 </div>
 
                 <div v-if="episodeList.length === 0" class="col-span-2 py-16 text-center text-slate-400 space-y-2">
-                  <i class="fa-solid fa-layer-group text-3xl"></i>
-                  <p class="text-sm font-semibold">暂无切分话题记录</p>
-                  <p class="text-xs">请点击右上角「一键全链路自动化」处理数据</p>
+                  <i class="fa-solid fa-layer-group text-3xl text-slate-300"></i>
+                  <p class="text-sm font-semibold text-slate-600">暂无符合条件的切分话题片段</p>
+                  <p class="text-xs">可尝试调整或清空时间筛选区间</p>
                 </div>
               </div>
             </div>
@@ -5234,8 +6263,13 @@
             <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
               <div class="space-y-1">
                 <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">需求洞察总数</span>
-                <p class="text-2xl font-black text-slate-800 tracking-tight">{{ insights.length }}</p>
-                <p class="text-[11px] text-slate-400">已提炼原子细分结构化需求</p>
+                <p class="text-2xl font-black text-slate-800 tracking-tight">{{ (insightStats && insightStats.total_insights !== undefined) ? insightStats.total_insights : (insights ? insights.length : 0) }}</p>
+                <p class="text-[11px] text-slate-400">
+                  <span v-if="insightStats && insightStats.global_total_insights && insightStats.total_insights !== insightStats.global_total_insights">
+                    当前筛选 (全局总计 {{ insightStats.global_total_insights }} 条)
+                  </span>
+                  <span v-else>已提炼原子细分结构化需求</span>
+                </p>
               </div>
               <div class="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-xl shadow-xs">
                 <i class="fa-solid fa-lightbulb"></i>
@@ -5278,7 +6312,10 @@
                 <p class="text-2xl font-black text-rose-600 tracking-tight">
                   {{ insightBlockerMajorCount }}
                 </p>
-                <p class="text-[11px] text-slate-400">高优先级与核心体验诉求</p>
+                <p class="text-[11px] text-slate-400">
+                  <span v-if="insightStats && insightStats.blocker_count !== undefined">致命 {{ insightStats.blocker_count }} · 严重 {{ insightStats.major_count }}</span>
+                  <span v-else>高优先级与核心体验诉求</span>
+                </p>
               </div>
               <div class="w-12 h-12 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center text-xl shadow-xs">
                 <i class="fa-solid fa-triangle-exclamation"></i>
@@ -5412,6 +6449,22 @@
                     <option value="pending">待推送 (未同步)</option>
                     <option value="success">已推送 (成功)</option>
                     <option value="failed">推送失败</option>
+                  </select>
+                </div>
+
+                <!-- Device Model Filter -->
+                <div class="flex items-center gap-1.5 text-xs">
+                  <span class="text-slate-500 font-medium whitespace-nowrap"><i class="fa-solid fa-guitar text-slate-400 mr-1"></i>机型:</span>
+                  <select 
+                    v-model="insightDeviceModelFilter" 
+                    @change="loadInsights" 
+                    class="bg-white border border-slate-200 rounded-lg py-1.5 px-2.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium shadow-2xs"
+                  >
+                    <option value="">全部机型</option>
+                    <option value="C2">🎸 C2</option>
+                    <option value="U1">🎸 U1</option>
+                    <option value="C1">🎸 C1</option>
+                    <option value="none">💻 通用/未指定</option>
                   </select>
                 </div>
 
@@ -5616,6 +6669,12 @@
                     <th class="py-3 px-3 min-w-[90px]">严重级别</th>
                     <th class="py-3 px-3 min-w-[100px]">事实置信度</th>
                     <th class="py-3 px-3 min-w-[100px]">社群状态</th>
+                    <th class="py-3 px-3 min-w-[130px]">
+                      <div class="flex items-center gap-1 text-slate-700">
+                        <i class="fa-regular fa-clock text-slate-400 text-[11px]"></i>
+                        <span>提炼时间</span>
+                      </div>
+                    </th>
                     <th class="py-3 px-4 min-w-[130px]">推送状态</th>
                     <th class="py-3 px-4 text-right min-w-[190px]">操作</th>
                   </tr>
@@ -5647,7 +6706,15 @@
 
                       <!-- 2. 所属模块与多级标签 -->
                       <td class="py-3.5 px-4">
-                        <div class="space-y-1">
+                        <div class="space-y-1.5 min-w-[130px] max-w-[200px]">
+                          <!-- 设备机型角标（整合至此列，不占用标题空间） -->
+                          <div v-if="ins.device_model">
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-300/90 shadow-2xs" :title="'所属设备机型: ' + ins.device_model">
+                              <i class="fa-solid fa-guitar text-amber-600 text-[10px]"></i>
+                              <span>{{ ins.device_model }}</span>
+                            </span>
+                          </div>
+
                           <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-semibold border border-indigo-100/80">
                             <i class="fa-solid fa-layer-group text-[10px]"></i>
                             {{ ins.module || '综合交流' }}
@@ -5674,14 +6741,16 @@
                       <!-- 4. 洞察标题与 5W1H 事实明细 -->
                       <td class="py-3.5 px-4 min-w-[320px]">
                         <div class="space-y-2">
-                          <!-- 标题与下钻链接 -->
-                          <div 
-                            class="font-bold text-slate-900 text-sm leading-snug hover:text-indigo-600 cursor-pointer transition flex items-center gap-1.5 group" 
-                            @click="viewInsightEvidence(ins)"
-                            title="点击查看社群原声证据链与 5W1H 深度下钻"
-                          >
-                            <span>{{ ins.summary }}</span>
-                            <i class="fa-solid fa-up-right-from-square text-[10px] text-slate-400 group-hover:text-indigo-600"></i>
+                          <!-- 标题与下钻链接（纯粹展示SVO核心标题，去除占用空间的角标与冗余时间） -->
+                          <div class="flex items-start justify-between gap-2">
+                            <div 
+                              class="font-bold text-slate-900 text-sm leading-snug hover:text-indigo-600 cursor-pointer transition inline-flex items-center gap-1.5 group flex-1" 
+                              @click="viewInsightEvidence(ins)"
+                              title="点击查看社群原声证据链与 5W1H 深度下钻"
+                            >
+                              <span>{{ ins.summary }}</span>
+                              <i class="fa-solid fa-up-right-from-square text-[10px] text-slate-400 group-hover:text-indigo-600"></i>
+                            </div>
                           </div>
 
                           <!-- 5W1H 结构化展示卡片 -->
@@ -5736,7 +6805,21 @@
                         </span>
                       </td>
 
-                      <!-- 8. 推送状态与时间 -->
+                      <!-- 8. 提炼时间 (时效展示) -->
+                      <td class="py-3.5 px-3 min-w-[130px]">
+                        <div class="space-y-0.5" :title="'提炼创建时间: ' + (ins.created_at ? formatDateTime(ins.created_at) : '-')">
+                          <div class="flex items-center gap-1.5 font-mono text-xs font-semibold text-slate-700 whitespace-nowrap">
+                            <i class="fa-regular fa-clock text-indigo-500 text-[11px]"></i>
+                            <span>{{ formatDateTime(ins.created_at) }}</span>
+                          </div>
+                          <div class="text-[11px] text-slate-400 pl-4 flex items-center gap-1">
+                            <span class="inline-block w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                            <span>{{ formatTimeAgo(ins.created_at) }}</span>
+                          </div>
+                        </div>
+                      </td>
+
+                      <!-- 9. 推送状态与时间 -->
                       <td class="py-3.5 px-4">
                         <div class="space-y-1">
                           <div v-if="ins.push_status === 'success'" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -5788,7 +6871,7 @@
 
                     <!-- 展开手风琴：历史推送记录溯源面板 -->
                     <tr v-if="expandedPushInsightIds[ins.id]" class="bg-slate-50/90 border-b border-slate-200">
-                      <td colspan="10" class="p-4 pl-12">
+                      <td colspan="11" class="p-4 pl-12">
                         <div class="bg-white rounded-xl border border-slate-200 p-4 space-y-3 shadow-2xs">
                           <div class="flex items-center justify-between">
                             <span class="text-xs font-bold text-slate-800 flex items-center gap-2">
@@ -5844,7 +6927,7 @@
 
                   <!-- Empty State -->
                   <tr v-if="insights.length === 0">
-                    <td colspan="10" class="py-14 text-center text-slate-400 space-y-2">
+                    <td colspan="11" class="py-14 text-center text-slate-400 space-y-2">
                       <i class="fa-regular fa-folder-open text-3xl text-slate-300"></i>
                       <p class="text-xs">暂无符合筛选条件的需求洞察记录</p>
                       <p class="text-[11px] text-slate-400">可调整上方搜索与筛选条件，或点击右上角「重新提炼洞察」</p>
@@ -8396,19 +9479,72 @@
           return idx % 7 === 0 || idx === total - 1;
         };
 
-        const tokenTrendSparkline = computed(() => {
-          const trends = stats.value?.daily_trends || [];
-          if (!trends.length) {
-            return { points: '', pathD: '', areaD: '', coords: [], hasData: false, max: 0, min: 0, total: 0, latest: 0 };
+        const tokenTrendViewMode = ref('hourly'); // 'hourly' | 'daily'
+        const hoveredTokenPoint = ref(null);
+
+        const currentTokenScope = computed(() => {
+          const tokUsage = stats.value?.token_usage;
+          if (tokenTrendViewMode.value === 'hourly') {
+            return tokUsage?.hourly_scope || {
+              total_tokens: 0,
+              prompt_tokens: 0,
+              completion_tokens: 0,
+              analysis_runs_count: 0,
+              models_breakdown: [],
+              runs_by_feature: {},
+              runs_by_type: {},
+              run_types_breakdown: [],
+              success_rate: 100
+            };
+          } else {
+            return tokUsage?.daily_scope || {
+              total_tokens: 0,
+              prompt_tokens: 0,
+              completion_tokens: 0,
+              analysis_runs_count: 0,
+              models_breakdown: [],
+              runs_by_feature: {},
+              runs_by_type: {},
+              run_types_breakdown: [],
+              success_rate: 100
+            };
           }
-          const values = trends.map(t => t.token_count || 0);
+        });
+
+        const tokenTrendSparkline = computed(() => {
+          const mode = tokenTrendViewMode.value;
+          let rawList = [];
+          if (mode === 'hourly') {
+            rawList = (stats.value?.token_usage?.token_hourly_trend || []).map(h => ({
+              label: h.hour,
+              tokens: h.tokens || 0,
+              runs_count: h.runs_count || 0
+            }));
+          } else {
+            rawList = (stats.value?.token_usage?.token_daily_trend || []).map(d => ({
+              label: d.date,
+              tokens: d.tokens || 0,
+              runs_count: d.runs_count || 0
+            }));
+            if (!rawList.length && stats.value?.daily_trends?.length) {
+              rawList = stats.value.daily_trends.map(d => ({
+                label: d.date,
+                tokens: d.token_count || 0,
+                runs_count: d.runs_count || 0
+              }));
+            }
+          }
+
+          if (!rawList.length) {
+            return { points: '', pathD: '', areaD: '', coords: [], hasData: false, max: 0, min: 0, total: 0, avg: 0, mode };
+          }
+
+          const values = rawList.map(item => item.tokens || 0);
           const max = Math.max(...values, 0);
           const min = Math.min(...values, 0);
           const total = values.reduce((a, b) => a + b, 0);
-          const latest = values[values.length - 1] || 0;
-          if (max === 0) {
-            return { points: '', pathD: '', areaD: '', coords: [], hasData: false, max: 0, min: 0, total, latest: 0 };
-          }
+          const avg = Math.round(total / (rawList.length || 1));
+
           const width = 240;
           const height = 48;
           const paddingX = 4;
@@ -8416,13 +9552,21 @@
           const paddingBottom = 4;
           const usableWidth = width - paddingX * 2;
           const usableHeight = height - paddingTop - paddingBottom;
-          const stepX = trends.length > 1 ? usableWidth / (trends.length - 1) : usableWidth;
+          const stepX = rawList.length > 1 ? usableWidth / (rawList.length - 1) : usableWidth;
 
-          const coords = trends.map((t, i) => {
-            const x = paddingX + (trends.length > 1 ? i * stepX : usableWidth / 2);
-            const val = t.token_count || 0;
-            const y = paddingTop + (usableHeight - (val / (max || 1)) * usableHeight);
-            return { x: Number(x.toFixed(1)), y: Number(y.toFixed(1)), val, date: t.date };
+          const coords = rawList.map((item, i) => {
+            const x = paddingX + (rawList.length > 1 ? i * stepX : usableWidth / 2);
+            const val = item.tokens || 0;
+            const y = max > 0 
+              ? paddingTop + (usableHeight - (val / max) * usableHeight)
+              : height - paddingBottom;
+            return {
+              x: Number(x.toFixed(1)),
+              y: Number(y.toFixed(1)),
+              val,
+              label: item.label,
+              runs_count: item.runs_count
+            };
           });
 
           const pointsStr = coords.map(p => `${p.x},${p.y}`).join(' ');
@@ -8434,13 +9578,31 @@
             pathD,
             areaD,
             coords,
-            hasData: true,
+            hasData: total > 0 || max > 0 || rawList.length > 0,
+            hasActivity: total > 0,
             max,
             min,
             total,
-            latest
+            avg,
+            mode
           };
         });
+
+        const getTokenTooltipStyle = (pt) => {
+          if (!pt) return {};
+          const pctX = (pt.x / 240) * 100;
+          const pctY = (pt.y / 48) * 100;
+          let translateX = -50;
+          if (pctX < 18) translateX = -5;
+          else if (pctX > 82) translateX = -95;
+          const isNearTop = pt.y < 16;
+          const translateY = isNearTop ? '8px' : 'calc(-100% - 6px)';
+          return {
+            left: `${pctX}%`,
+            top: `${pctY}%`,
+            transform: `translate(${translateX}%, ${translateY})`
+          };
+        };
 
         const conversations = ref([]);
         const convSearchQuery = ref('');
@@ -8567,10 +9729,28 @@
         const insightTypeFilter = ref('');
         const insightSeverityFilter = ref('');
         const insightPushStatusFilter = ref('all');
+        const insightDeviceModelFilter = ref('');
         const selectedInsightIds = ref([]);
         const isInsightEvidenceModalOpen = ref(false);
         const currentInsightEvidence = ref(null);
         const isEvidenceLoading = ref(false);
+        const insightStats = ref({
+          total_insights: 0,
+          pending_push_count: 0,
+          pushed_success_count: 0,
+          pushed_failed_count: 0,
+          push_success_rate: 0,
+          blocker_major_count: 0,
+          blocker_count: 0,
+          major_count: 0,
+          minor_count: 0,
+          trivial_count: 0,
+          global_total_insights: 0,
+          global_pending_push_count: 0,
+          global_pushed_success_count: 0,
+          global_blocker_major_count: 0,
+        });
+        const insightStatsLoading = ref(false);
 
         const insightCategoryFilters = [
           { key: 'software_app', name: '软件与App生态', icon: 'fa-solid fa-mobile-screen', color: 'sky' },
@@ -8587,6 +9767,27 @@
 
         // Episodes & Distinct Topic Clusters
         const episodeViewMode = ref('clusters'); // 'clusters' | 'raw'
+        const clusterViewLayout = ref('grid'); // 'grid' | 'list'
+        const clusterTimeFilterType = ref('first_discussed'); // 'first_discussed' | 'last_discussed'
+        const clusterStartDate = ref(''); // YYYY-MM-DD
+        const clusterEndDate = ref(''); // YYYY-MM-DD
+        const clusterDatePreset = ref('all'); // 'all' | 'today' | '7d' | '30d' | 'custom'
+        const clusterDatePresets = [
+          { id: 'all', label: '全部' },
+          { id: 'today', label: '今日' },
+          { id: '7d', label: '近 7 日' },
+          { id: '30d', label: '近 30 日' },
+        ];
+        // Raw Segmented Episodes Time Filter
+        const rawEpisodeStartDate = ref('');
+        const rawEpisodeEndDate = ref('');
+        const rawEpisodeDatePreset = ref('all');
+        const rawEpisodeDatePresets = [
+          { id: 'all', label: '全部' },
+          { id: 'today', label: '今日' },
+          { id: '7d', label: '近 7 日' },
+          { id: '30d', label: '近 30 日' },
+        ];
         const topicClusters = ref([]);
         const episodeSortBy = ref('latest');
         const loadingClusters = ref(false);
@@ -9433,6 +10634,7 @@
           mouseTooltip.value.visible = false;
           analyticsPeriod.value = period;
           loadStats(period);
+          loadRecentBitablePushes(period);
         };
 
         const loadConversations = async () => {
@@ -10055,7 +11257,7 @@
               loadParticipants();
               loadMessagesWithStats();
             }
-            if (tabId === 'tasks') { loadActiveTasks(); loadTaskHistory(); }
+            if (tabId === 'tasks') { loadActiveTasks(); loadTaskHistory(); loadScheduledTaskConfig(); }
             if (tabId === 'conversations') {
               loadConversations();
             }
@@ -10770,11 +11972,70 @@
           }
         };
 
+        const padDateNumber = (n) => String(n).padStart(2, '0');
+        const fmtDateString = (d) => `${d.getFullYear()}-${padDateNumber(d.getMonth() + 1)}-${padDateNumber(d.getDate())}`;
+
+        const setClusterTimeFilterType = (type) => {
+          if (clusterTimeFilterType.value === type) return;
+          clusterTimeFilterType.value = type;
+          if (clusterStartDate.value || clusterEndDate.value) {
+            loadTopicClusters();
+          }
+        };
+
+        const applyClusterDatePreset = (preset) => {
+          clusterDatePreset.value = preset;
+          if (preset === 'all') {
+            clusterStartDate.value = '';
+            clusterEndDate.value = '';
+            loadTopicClusters();
+            return;
+          }
+          const now = new Date();
+          const todayStr = fmtDateString(now);
+          if (preset === 'today') {
+            clusterStartDate.value = todayStr;
+            clusterEndDate.value = todayStr;
+          } else if (preset === '7d') {
+            const d = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
+            clusterStartDate.value = fmtDateString(d);
+            clusterEndDate.value = todayStr;
+          } else if (preset === '30d') {
+            const d = new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000);
+            clusterStartDate.value = fmtDateString(d);
+            clusterEndDate.value = todayStr;
+          }
+          loadTopicClusters();
+        };
+
+        const onClusterDateInput = () => {
+          clusterDatePreset.value = 'custom';
+          loadTopicClusters();
+        };
+
+        const clearClusterDateFilter = () => {
+          clusterDatePreset.value = 'all';
+          clusterStartDate.value = '';
+          clusterEndDate.value = '';
+          loadTopicClusters();
+        };
+
         const loadTopicClusters = async () => {
           loadingClusters.value = true;
           try {
-            const res = await fetch(`/api/v1/episodes/clusters?sort_by=${episodeSortBy.value}`);
-            topicClusters.value = await res.json();
+            const params = new URLSearchParams();
+            params.set('sort_by', episodeSortBy.value);
+            params.set('time_filter_type', clusterTimeFilterType.value);
+            if (clusterStartDate.value) {
+              params.set('start_date', clusterStartDate.value);
+            }
+            if (clusterEndDate.value) {
+              params.set('end_date', clusterEndDate.value);
+            }
+            const res = await fetch(`/api/v1/episodes/clusters?${params.toString()}`);
+            if (res.ok) {
+              topicClusters.value = await res.json();
+            }
           } catch(e) {
             console.error('Failed to load topic clusters', e);
           } finally {
@@ -10782,10 +12043,58 @@
           }
         };
 
+        const applyRawEpisodeDatePreset = (preset) => {
+          rawEpisodeDatePreset.value = preset;
+          if (preset === 'all') {
+            rawEpisodeStartDate.value = '';
+            rawEpisodeEndDate.value = '';
+            loadEpisodes();
+            return;
+          }
+          const now = new Date();
+          const todayStr = fmtDateString(now);
+          if (preset === 'today') {
+            rawEpisodeStartDate.value = todayStr;
+            rawEpisodeEndDate.value = todayStr;
+          } else if (preset === '7d') {
+            const d = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
+            rawEpisodeStartDate.value = fmtDateString(d);
+            rawEpisodeEndDate.value = todayStr;
+          } else if (preset === '30d') {
+            const d = new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000);
+            rawEpisodeStartDate.value = fmtDateString(d);
+            rawEpisodeEndDate.value = todayStr;
+          }
+          loadEpisodes();
+        };
+
+        const onRawEpisodeDateInput = () => {
+          rawEpisodeDatePreset.value = 'custom';
+          loadEpisodes();
+        };
+
+        const clearRawEpisodeDateFilter = () => {
+          rawEpisodeDatePreset.value = 'all';
+          rawEpisodeStartDate.value = '';
+          rawEpisodeEndDate.value = '';
+          loadEpisodes();
+        };
+
         const loadEpisodes = async () => {
           try {
-            const res = await fetch(`/api/v1/episodes?limit=200&sort_by=${episodeSortBy.value}`);
-            episodeList.value = await res.json();
+            const params = new URLSearchParams();
+            params.set('limit', '300');
+            params.set('sort_by', episodeSortBy.value);
+            if (rawEpisodeStartDate.value) {
+              params.set('start_date', rawEpisodeStartDate.value);
+            }
+            if (rawEpisodeEndDate.value) {
+              params.set('end_date', rawEpisodeEndDate.value);
+            }
+            const res = await fetch(`/api/v1/episodes?${params.toString()}`);
+            if (res.ok) {
+              episodeList.value = await res.json();
+            }
           } catch(e) { console.error('Failed to load episodes', e); }
         };
 
@@ -10955,9 +12264,12 @@
         const getInsightSeverityBadge = (sev) => {
           const map = {
             'blocker': 'bg-rose-100 text-rose-800 border-rose-300 font-bold',
+            'critical': 'bg-rose-100 text-rose-800 border-rose-300 font-bold',
             'major': 'bg-amber-100 text-amber-800 border-amber-300 font-semibold',
+            'high': 'bg-amber-100 text-amber-800 border-amber-300 font-semibold',
             'minor': 'bg-sky-100 text-sky-800 border-sky-200',
             'trivial': 'bg-slate-100 text-slate-700 border-slate-200',
+            'low': 'bg-slate-100 text-slate-700 border-slate-200',
           };
           return map[sev] || 'bg-slate-100 text-slate-700 border-slate-200';
         };
@@ -10979,10 +12291,52 @@
           }, 300);
         };
 
-        const loadInsights = async () => {
+        const loadInsightStats = async () => {
+          insightStatsLoading.value = true;
           try {
             const params = new URLSearchParams();
-            params.append('limit', '100');
+            if (insightSearchQuery.value && insightSearchQuery.value.trim()) {
+              params.append('search', insightSearchQuery.value.trim());
+            }
+            if (selectedInsightTags.value && selectedInsightTags.value.length > 0) {
+              params.append('tags', selectedInsightTags.value.join(','));
+            }
+            if (insightDatePreset.value) {
+              params.append('date_preset', insightDatePreset.value);
+            }
+            if (insightDatePreset.value === 'custom') {
+              if (insightStartDate.value) params.append('start_date', insightStartDate.value);
+              if (insightEndDate.value) params.append('end_date', insightEndDate.value);
+            }
+            if (insightTypeFilter.value) {
+              params.append('insight_type', insightTypeFilter.value);
+            }
+            if (insightSeverityFilter.value) {
+              params.append('severity', insightSeverityFilter.value);
+            }
+            if (insightPushStatusFilter.value && insightPushStatusFilter.value !== 'all') {
+              params.append('push_status', insightPushStatusFilter.value);
+            }
+            if (insightDeviceModelFilter.value) {
+              params.append('device_model', insightDeviceModelFilter.value);
+            }
+
+            const res = await fetch(`/api/v1/insights/stats?${params.toString()}`);
+            if (res.ok) {
+              insightStats.value = await res.json();
+            }
+          } catch(e) {
+            console.error('Failed to load insight stats:', e);
+          } finally {
+            insightStatsLoading.value = false;
+          }
+        };
+
+        const loadInsights = async () => {
+          loadInsightStats();
+          try {
+            const params = new URLSearchParams();
+            params.append('limit', '300');
             if (insightSearchQuery.value && insightSearchQuery.value.trim()) {
               params.append('search', insightSearchQuery.value.trim());
             }
@@ -11007,6 +12361,9 @@
             }
             if (insightPushStatusFilter.value && insightPushStatusFilter.value !== 'all') {
               params.append('push_status', insightPushStatusFilter.value);
+            }
+            if (insightDeviceModelFilter.value) {
+              params.append('device_model', insightDeviceModelFilter.value);
             }
 
             const res = await fetch(`/api/v1/insights?${params.toString()}`);
@@ -11040,6 +12397,7 @@
           insightTypeFilter.value = '';
           insightSeverityFilter.value = '';
           insightPushStatusFilter.value = 'all';
+          insightDeviceModelFilter.value = '';
           loadInsights();
         };
 
@@ -11049,26 +12407,41 @@
         });
 
         const pendingCountOnPage = computed(() => {
+          if (insightStats.value && typeof insightStats.value.pending_push_count === 'number') {
+            return insightStats.value.pending_push_count;
+          }
           if (!insights.value) return 0;
           return insights.value.filter(ins => ins.push_status !== 'success').length;
         });
 
         const insightPendingPushCount = computed(() => {
+          if (insightStats.value && typeof insightStats.value.pending_push_count === 'number') {
+            return insightStats.value.pending_push_count;
+          }
           if (!insights.value) return 0;
           return insights.value.filter(ins => ins.push_status !== 'success').length;
         });
 
         const insightSuccessPushCount = computed(() => {
+          if (insightStats.value && typeof insightStats.value.pushed_success_count === 'number') {
+            return insightStats.value.pushed_success_count;
+          }
           if (!insights.value) return 0;
           return insights.value.filter(ins => ins.push_status === 'success').length;
         });
 
         const insightBlockerMajorCount = computed(() => {
+          if (insightStats.value && typeof insightStats.value.blocker_major_count === 'number') {
+            return insightStats.value.blocker_major_count;
+          }
           if (!insights.value) return 0;
           return insights.value.filter(ins => ins.severity === 'blocker' || ins.severity === 'major').length;
         });
 
         const insightSuccessRate = computed(() => {
+          if (insightStats.value && typeof insightStats.value.push_success_rate === 'number') {
+            return insightStats.value.push_success_rate;
+          }
           if (!insights.value || insights.value.length === 0) return 0;
           const success = insights.value.filter(ins => ins.push_status === 'success').length;
           return Math.round((success / insights.value.length) * 100);
@@ -11155,7 +12528,9 @@
 
         const copyInsightDetails = (ins) => {
           if (!ins) return;
-          const text = `【洞察标题】${ins.summary}\n【所属模块】${ins.module}\n【反馈类型】${ins.type_label_zh || ins.insight_type}\n【严重级别】${ins.severity_label_zh || ins.severity}\n【5W1H 描述】\n${ins.description}`;
+          const timeText = ins.created_at ? `\n【提炼时间】${formatDateTime(ins.created_at)}` : '';
+          const deviceText = `\n【设备机型】${ins.device_model || '通用/未指定'}`;
+          const text = `【洞察标题】${ins.summary}\n【所属模块】${ins.module}\n【反馈类型】${ins.type_label_zh || ins.insight_type}\n【严重级别】${ins.severity_label_zh || ins.severity}${deviceText}${timeText}\n【5W1H 描述】\n${ins.description}`;
           navigator.clipboard.writeText(text).then(() => {
             alert('洞察详情与 5W1H 已复制到剪贴板！');
           }).catch(() => {
@@ -11365,12 +12740,21 @@
           }
         };
 
-        const loadRecentBitablePushes = async () => {
+        const loadRecentBitablePushes = async (periodOverride) => {
           try {
-            const res = await fetch('/api/v1/bitable/recent?limit=8');
+            const period = periodOverride || analyticsPeriod.value || 'all';
+            let url = `/api/v1/bitable/recent?limit=8&date_preset=${encodeURIComponent(period)}`;
+            if (period === 'custom' && customDateRange && customDateRange.value && customDateRange.value.start && customDateRange.value.end) {
+              url += `&start_date=${encodeURIComponent(customDateRange.value.start)}&end_date=${encodeURIComponent(customDateRange.value.end)}`;
+            }
+            const res = await fetch(url);
             if (res.ok) {
               const data = await res.json();
-              recentBitablePushes.value = Array.isArray(data) ? data : (data.items || []);
+              const items = Array.isArray(data) ? data : (data.items || []);
+              recentBitablePushes.value = items.map(ins => ({
+                ...ins,
+                _parsed5W1H: parse5W1H(ins.description || ins.fact_5w1h || '')
+              }));
             }
           } catch(e) {
             console.error('Failed to load recent bitable pushes:', e);
@@ -11983,7 +13367,178 @@
           await refreshAll();
         };
 
+        // ==========================================
+        // Scheduled Autonomous Tasks State & Logic
+        // ==========================================
+        const scheduledTaskConfig = ref({
+          enabled: false,
+          selected_steps: ['scan_import', 'segmentation', 'insight_extraction'],
+          schedule_type: 'day',
+          schedule_interval: 1,
+          schedule_weekday: '1',
+          schedule_month_day: '1',
+          schedule_time: '09:00',
+          cron_expression: '0 9 * * *',
+          force_mock: false,
+          clean_previous_insights: false,
+          last_run_at: null,
+          last_status: null,
+          last_task_id: null,
+          next_run_at: null,
+          description: ''
+        });
+        const savingSchedule = ref(false);
+        const triggeringSchedule = ref(false);
+
+        const pipelineStageOrder = ['scan_import', 'multimodal', 'segmentation', 'insight_extraction'];
+
+        const orderedScheduledSteps = computed(() => {
+          const current = scheduledTaskConfig.value.selected_steps || [];
+          return pipelineStageOrder.filter(id => current.includes(id));
+        });
+
+        const orderedScheduledStepObjects = computed(() => {
+          const order = orderedScheduledSteps.value;
+          return order.map(id => singleStepCatalog.find(s => s.id === id) || { id, name: id, icon: 'fa-solid fa-cube', desc: '' });
+        });
+
+        const isStepSelectedInSchedule = (stepId) => {
+          return (scheduledTaskConfig.value.selected_steps || []).includes(stepId);
+        };
+
+        const toggleScheduledStep = (stepId) => {
+          const current = [...(scheduledTaskConfig.value.selected_steps || [])];
+          const idx = current.indexOf(stepId);
+          if (idx > -1) {
+            current.splice(idx, 1);
+          } else {
+            current.push(stepId);
+          }
+          scheduledTaskConfig.value.selected_steps = pipelineStageOrder.filter(id => current.includes(id));
+        };
+
+        const onTaskScheduleChange = () => {
+          let timeVal = scheduledTaskConfig.value.schedule_time || '09:00';
+          if (!timeVal.includes(':')) timeVal = '09:00';
+          const [hStr, mStr] = timeVal.split(':');
+          const minute = parseInt(mStr, 10) || 0;
+          const hour = parseInt(hStr, 10) || 0;
+          const interval = Math.max(1, parseInt(scheduledTaskConfig.value.schedule_interval, 10) || 1);
+
+          if (scheduledTaskConfig.value.schedule_type === 'day') {
+            if (interval <= 1) {
+              scheduledTaskConfig.value.cron_expression = `${minute} ${hour} * * *`;
+            } else {
+              scheduledTaskConfig.value.cron_expression = `${minute} ${hour} */${interval} * *`;
+            }
+          } else if (scheduledTaskConfig.value.schedule_type === 'week') {
+            const w = scheduledTaskConfig.value.schedule_weekday || '1';
+            scheduledTaskConfig.value.cron_expression = `${minute} ${hour} * * ${w}`;
+          } else if (scheduledTaskConfig.value.schedule_type === 'month') {
+            const d = scheduledTaskConfig.value.schedule_month_day || '1';
+            if (interval <= 1) {
+              scheduledTaskConfig.value.cron_expression = `${minute} ${hour} ${d} * *`;
+            } else {
+              scheduledTaskConfig.value.cron_expression = `${minute} ${hour} ${d} */${interval} *`;
+            }
+          }
+        };
+
+        const setTaskScheduleQuickTime = (t) => {
+          scheduledTaskConfig.value.schedule_time = t;
+          onTaskScheduleChange();
+        };
+
+        const scheduledTaskSummaryText = computed(() => {
+          const t = scheduledTaskConfig.value.schedule_time || '09:00';
+          const interval = Math.max(1, parseInt(scheduledTaskConfig.value.schedule_interval, 10) || 1);
+          const weekMap = { '1': '周一', '2': '周二', '3': '周三', '4': '周四', '5': '周五', '6': '周六', '0': '周日', '7': '周日' };
+          if (scheduledTaskConfig.value.schedule_type === 'day') {
+            return interval === 1 ? `每天 ${t} 自动触发` : `每隔 ${interval} 天的 ${t} 自动触发`;
+          } else if (scheduledTaskConfig.value.schedule_type === 'week') {
+            const wName = weekMap[scheduledTaskConfig.value.schedule_weekday] || '周一';
+            return interval === 1 ? `每周${wName} ${t} 自动触发` : `每隔 ${interval} 周的${wName} ${t} 自动触发`;
+          } else if (scheduledTaskConfig.value.schedule_type === 'month') {
+            const d = scheduledTaskConfig.value.schedule_month_day || '1';
+            return interval === 1 ? `每月 ${d} 号 ${t} 自动触发` : `每隔 ${interval} 个月的 ${d} 号 ${t} 自动触发`;
+          }
+          return `按自定义时间规则触发`;
+        });
+
+        const loadScheduledTaskConfig = async () => {
+          try {
+            const res = await fetch('/api/v1/tasks/schedule');
+            if (res.ok) {
+              const data = await res.json();
+              scheduledTaskConfig.value = {
+                ...scheduledTaskConfig.value,
+                ...data,
+              };
+              onTaskScheduleChange();
+            }
+          } catch (e) {
+            console.error('Failed to load scheduled task config', e);
+          }
+        };
+
+        const saveScheduledTaskConfig = async () => {
+          if (!scheduledTaskConfig.value.selected_steps || scheduledTaskConfig.value.selected_steps.length === 0) {
+            alert('请至少选择一个需要定期执行的单步任务！');
+            return;
+          }
+          savingSchedule.value = true;
+          try {
+            onTaskScheduleChange();
+            const res = await fetch('/api/v1/tasks/schedule', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(scheduledTaskConfig.value)
+            });
+            if (res.ok) {
+              const data = await res.json();
+              scheduledTaskConfig.value = { ...scheduledTaskConfig.value, ...data };
+              alert('定期自动化任务配置已成功保存！');
+            } else {
+              const err = await res.json();
+              alert('保存失败: ' + (err.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('保存异常: ' + e.message);
+          } finally {
+            savingSchedule.value = false;
+          }
+        };
+
+        const triggerScheduledTaskNow = async () => {
+          if (!scheduledTaskConfig.value.selected_steps || scheduledTaskConfig.value.selected_steps.length === 0) {
+            alert('当前未勾选任何执行任务，请先勾选需要执行的步骤！');
+            return;
+          }
+          triggeringSchedule.value = true;
+          try {
+            const res = await fetch('/api/v1/tasks/schedule/trigger-now', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+            });
+            if (res.ok) {
+              await loadActiveTasks();
+              await loadTaskHistory();
+              alert('已成功按定期配置启动链式顺序执行任务！请查看上方【当前实时作业监控】。');
+              const activeEl = document.getElementById('active-tasks-monitor');
+              if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth' });
+            } else {
+              const err = await res.json();
+              alert('触发失败: ' + (err.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('触发异常: ' + e.message);
+          } finally {
+            triggeringSchedule.value = false;
+          }
+        };
+
         const openPipelineModal = () => {
+
           pipelineModalVisible.value = true;
         };
 
@@ -12115,7 +13670,9 @@
           loadBitableConfig();
           loadActiveTasks();
           loadTaskHistory();
+          loadScheduledTaskConfig();
           loadAssistantHistory();
+
           loadAssistantSettings();
           // Active tasks & Watchdog live metrics background ticker
           setInterval(() => {
@@ -12125,10 +13682,10 @@
             if (currentTab.value === 'settings' && settingsSubTab.value === 'chat') {
               loadWatchdogStatus();
             }
-            if (currentTab.value === 'overview' && (activeTasks.value.length > 0 || (Date.now() - (lastOverviewStatsLoadedAt.value || 0) > 3500))) {
-              loadStats();
+            if (currentTab.value === 'overview') {
+              loadStats(null, false);
             }
-          }, 2000);
+          }, 3000);
 
           // Keyboard shortcuts for Image Lightbox
           window.addEventListener('keydown', (e) => {
@@ -12172,6 +13729,23 @@
           insights,
           topics,
           episodeViewMode,
+          clusterViewLayout,
+          clusterTimeFilterType,
+          clusterStartDate,
+          clusterEndDate,
+          clusterDatePreset,
+          clusterDatePresets,
+          setClusterTimeFilterType,
+          applyClusterDatePreset,
+          onClusterDateInput,
+          clearClusterDateFilter,
+          rawEpisodeStartDate,
+          rawEpisodeEndDate,
+          rawEpisodeDatePreset,
+          rawEpisodeDatePresets,
+          applyRawEpisodeDatePreset,
+          onRawEpisodeDateInput,
+          clearRawEpisodeDateFilter,
           topicClusters,
           loadingClusters,
           episodeSortBy,
@@ -12371,7 +13945,21 @@
           cancelRunningTask,
           openTaskDetail,
           clearTaskHistory,
+          scheduledTaskConfig,
+          savingSchedule,
+          triggeringSchedule,
+          orderedScheduledSteps,
+          orderedScheduledStepObjects,
+          isStepSelectedInSchedule,
+          toggleScheduledStep,
+          onTaskScheduleChange,
+          setTaskScheduleQuickTime,
+          scheduledTaskSummaryText,
+          loadScheduledTaskConfig,
+          saveScheduledTaskConfig,
+          triggerScheduledTaskNow,
           showTagManagerModal,
+
           tagFilterType,
           tagCategoryFilter,
           tagSearchQuery,
@@ -12408,6 +13996,7 @@
           insightTypeFilter,
           insightSeverityFilter,
           insightPushStatusFilter,
+          insightDeviceModelFilter,
           selectedInsightIds,
           isAllSelectedOnPage,
           pendingCountOnPage,
@@ -12415,6 +14004,9 @@
           insightSuccessPushCount,
           insightBlockerMajorCount,
           insightSuccessRate,
+          insightStats,
+          insightStatsLoading,
+          loadInsightStats,
           toggleSelectInsight,
           toggleSelectAllOnPage,
           selectPendingPushOnly,
@@ -12484,6 +14076,10 @@
           dailyTrendActiveDays,
           shouldShowDateLabel,
           tokenTrendSparkline,
+          tokenTrendViewMode,
+          currentTokenScope,
+          hoveredTokenPoint,
+          getTokenTooltipStyle,
           vocPeriod,
           vocReportLoading,
           generatingAiSummary,
