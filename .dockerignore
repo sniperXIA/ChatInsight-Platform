@@ -20,8 +20,7 @@ derived
 uploads
 logs
 scratch
-temp_edge_prof*
-Demo用户聊天数据
+# Demo用户聊天数据 is included for Docker container media rendering
 references
 config/chat_settings.json
 config/model_settings.json
