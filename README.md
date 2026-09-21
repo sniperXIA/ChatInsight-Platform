@@ -9,7 +9,8 @@
   <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/Database-SQLite%20Async%20WAL-003B57.svg?style=flat-square" alt="SQLite WAL"></a>
   <a href="https://openrouter.ai/"><img src="https://img.shields.io/badge/AI%20Gateway-OpenRouter%20%28Qwen--VL%20%7C%20DeepSeek%29-purple.svg?style=flat-square" alt="OpenRouter"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT%20(Commercial%20Free)-green.svg?style=flat-square" alt="MIT License"></a>
-  <a href="https://github.com/sniperXIA/ChatInsight-Platform"><img src="https://img.shields.io/badge/Tests-112%20Passed%20100%25-brightgreen.svg?style=flat-square" alt="Tests"></a>
+  <a href="https://github.com/sniperXIA/ChatInsight-Platform/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/Release-v1.1.0-blue.svg?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/sniperXIA/ChatInsight-Platform"><img src="https://img.shields.io/badge/Tests-180%2B%20Passed%20100%25-brightgreen.svg?style=flat-square" alt="Tests"></a>
 </p>
 
 ---
@@ -68,7 +69,8 @@ ChatInsight 提供了完备的单页控制台（SPA），涵盖从底层数据�
 
 - **核心数据卡片**：展示日均吞吐、周环比增长、去重话题与洞察沉淀数。
 - **活跃走势时序图**：按日期/小时统计社群讨论峰值，支持横滑与时段下钻。
-- **算力与健康大盘**：统计累计 Token（Prompt / Completion）、平均吐字速度（tok/s）、调用成功率与接口健康度。
+- **算力大盘时分走势联动**：支持【分时走势 (今日24h)】与【分天走势 (近7天)】实时响应式联动切换，动态同步今日/近7天的输入 Prompt、输出 Completion 与总 Token 消耗。
+- **飞书多维表格流转看板**：严格限定仅展示统计周期内真实发生过推送的记录，彻底杜绝待推送项占位，并支持周期感知空状态与一键跳转。
 
 ---
 
@@ -99,9 +101,10 @@ ChatInsight 提供了完备的单页控制台（SPA），涵盖从底层数据�
 
 ![需求洞察与推送](docs/images/04_insights.png)
 
+- **主谓宾 (SVO) 结构化清洗与智能去重**：自动剔除低质口语化前缀与重复后缀，提炼核心主谓宾语义，避免同质洞察堆积。
+- **设备型号智能感知与打标**：自动识别用户反馈中涉及的具体硬件机型（如 `iPhone 15 Pro Max`、`小米14 Ultra`），支持按机型进行组合过滤与统计。
 - **5W1H 事实链与防幻觉**：包含清晰的角色、触发场景、诉求、影响度，并附带 100% 置信度事实依据与原文溯源。
-- **严重等级分级**：自动判定并标注【致命阻塞】、【严重故障】、【一般缺陷】、【体验优化】。
-- **飞书多维表格双向协同**：支持单条勾选或批量推送待处理需求至飞书多维表格，实时显示推送状态与成功率。
+- **飞书多维表格推送审计手风琴**：支持展开查看每一次向飞书推送的流水日志、HTTP 响应状态与流转记录。
 
 ---
 
@@ -110,10 +113,10 @@ ChatInsight 提供了完备的单页控制台（SPA），涵盖从底层数据�
 
 ![智能研究助手](docs/images/05_assistant.png)
 
+- **双通道 RAG 检索融合 (Dual-Channel Hybrid Search)**：支持自定义 Dense 向量稠密检索网关与 BM25 稀疏词频检索的 RRF 互惠重排融合，大幅提升细分专业术语与偶发故障的召回率。
 - **产品决策宏观综述 (Executive Summary)**：提供针对特定功能的高管层与战略视角结论及置信度评分。
 - **强制可追溯证据链引用 (Citation Tags)**：每一个核心结论均强绑定 `[1]`, `[2]`, `[3]` 等原文引用角标，点击即可联动高亮对应的社群原始事实证据。
-- **模块化需求拆解**：输出标准 REQ 格式需求清单（痛点现象、触发场景、官方客服回复记录、推荐优化方案）。
-- **问答历史归档与检索**：所有深度问答秒级缓存，支持随时重温与关键词检索历史调研结论。
+- **模块化需求拆解与历史归档**：输出标准 REQ 格式需求清单，所有问答秒级缓存并支持关键字快速检索。
 
 ---
 
@@ -122,9 +125,21 @@ ChatInsight 提供了完备的单页控制台（SPA），涵盖从底层数据�
 
 ![VoC 业务报告](docs/images/06_reports.png)
 
-- **全局运营简报**：快速获知周期内处理的消息条数、产出的原始切片与高紧迫度洞察。
-- **分类异动飙升预警**：对环比增幅超过 50% 且体量显著的功能模块（如曲谱与乐库、硬件与外设）自动触发红标报警。
+- **真实系统日历时间绑定**：周期时间（今日、近7日、近30日、全周期）严格按当前日历时间动态对齐，坚决移除历史假定回退逻辑。
+- **零数据周期防幻觉治理**：在今日与近7天无新增消息时，客观陈述事实并提供科学的常规运营监控建议，杜绝大模型编造虚假故障。
+- **全量业务深度聚合**：近30天与全周期模式下聚合 3,600+ 条真实社群消息、140+ 个话题与 400+ 条洞察，准确输出 16 个业务分类异动预警、重点高价值话题（综合热度 98.0）与落地建议。
 - **一键 Markdown 导出与飞书机器人推送**：支持将研报一键下发至运营群机器人或导出为企业知识库文档。
+
+---
+
+### 7. 自动化定时调度中心 (Scheduled Tasks & Continuous Pipeline)
+打造面向无人监管场景下的企业级定时自动化流水线，实现社群运营与洞察提炼的常态化闭环。
+
+![任务调度中心](docs/images/07_tasks.png)
+
+- **4 核心阶段精简流水线**：将端到端流程标准化归纳为「1. 扫描与全量导入 ➔ 2. 多模态视觉解析 ➔ 3. 对话 Episode 话题切分 ➔ 4. 洞察提炼与事实核验」，支持一键全自动执行或专项单步调度。
+- **无人监管定时调度器 (Scheduled Pipeline)**：内置可视化 Cron 调度配置器，支持按每天、每周、每月自定义触发时间与执行阶段，并精准计算预测下一次运行时间（Next Run At）。
+- **实时作业状态感知与生命周期管理**：提供作业实时心跳监控、后台协程健康守护、执行日志查看与一键安全启停。
 
 ---
 
@@ -171,15 +186,21 @@ ChatInsight 采用轻量、高可靠、松耦合的工业级后端架构：
 |    * Stage 1: CandidateRanker (模块划分 + 语义向量 / n-gram 相似度快速召回)       |
 |    * Stage 2: PairwiseJudge (大模型深度仲裁: SAME_ISSUE / SUB_ISSUE / DISTINCT)   |
 |    * Topic 生命周期: 频次累加、用户数统计、动态代表性标题与摘要提炼               |
-|    * FeishuBitableService: 事务性 Outbox 事件分发与飞书多维表格双向协同           |
+|    * FeishuBitableService: 事务性 Outbox 事件分发、多维表格推送与审计流水         |
 +-----------------------------------------------------------------------------------+
                                         |
                                         v
 +-----------------------------------------------------------------------------------+
-| 5. 混合检索、研究助手问答与 VoC 报表 (packages/search & analytics)                |
-|    * HybridSearchEngine: 跨 Topic / Insight / Message / Media 的全文多维检索      |
+| 5. 混合检索、研究助手问答与 VoC 报表 (packages/search, retrieval & analytics)     |
+|    * VectorService & HybridSearch: Dense 稠密向量嵌入 + BM25 词频 RRF 互惠重排    |
 |    * ResearchAssistant: 基于检索证据链的深度问答，强制绑定 Citation 原文角标      |
-|    * ReportGenerator: 模块热度分布、严重级分布、Top 阻塞问题、一键 Markdown 导出 |
+|    * ReportGenerator: 真实日历锚定、零数据防幻觉治理、分类异动预警与周报/月报导出 |
++-----------------------------------------------------------------------------------+
+                                        |
+                                        v
++-----------------------------------------------------------------------------------+
+| 6. 无人监管定时调度与持续流水线 (packages/tasks)                                  |
+|    * ScheduledTaskManager: 4 阶段自动化流水线、动态 Cron 表达式计算与守护执行     |
 +-----------------------------------------------------------------------------------+
 ```
 
@@ -292,6 +313,11 @@ python cli.py generate-report --output "voc_report.md" # 生成并导出业务�
 | **Assistant** | `POST` | `/api/v1/assistant/ask` | 智能研究助手带证据链 Citation 问答 |
 | **Assistant** | `GET` | `/api/v1/assistant/history` | 查询历史研讨论证记录 |
 | **Feishu Bitable**| `POST` | `/api/v1/feishu-bitable/push-selected` | 批量将已核验洞察推送到飞书多维表格 |
+| **Feishu Bitable**| `GET` | `/api/v1/feishu-bitable/recent` | 查询统计周期内最近推送至飞书的流转记录 |
+| **Scheduled Tasks**| `GET` | `/api/v1/tasks/scheduled-config` | 获取自动化定时流水线配置与执行状态 |
+| **Scheduled Tasks**| `POST` | `/api/v1/tasks/scheduled-config` | 更新定时任务调度策略与 Cron 表达式 |
+| **Scheduled Tasks**| `POST` | `/api/v1/tasks/scheduled/run-now` | 立即手动触发执行一次定时任务 |
+| **Settings** | `GET` | `/api/v1/settings/embedding` | 查询当前向量嵌入模型配置与连通性测试 |
 | **Analytics** | `POST` | `/api/v1/analytics/reports/generate` | 动态生成周期 VoC 深度研报 |
 | **Analytics** | `GET` | `/api/v1/analytics/reports/export-markdown` | 导出 Markdown 格式周报 |
 
